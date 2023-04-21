@@ -1,4 +1,5 @@
 tlsc_MODULES:=	client \
+		config \
 		connection \
 		daemon \
 		event \
