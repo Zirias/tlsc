@@ -19,7 +19,7 @@
 
 #include <openssl/ssl.h>
 
-#define CONNBUFSZ 4096
+#define CONNBUFSZ 16*1024
 #define NWRITERECS 16
 #define CONNTICKS 6
 #define RESOLVTICKS 6
@@ -153,6 +153,8 @@ static void checkPendingTls(void *receiver, void *sender, void *args)
 
 static void dohandshake(Connection *self)
 {
+    Log_fmt(L_DEBUG, "connection: handshake with %s",
+	    Connection_remoteAddr(self));
     int rc = SSL_connect(self->tls);
     if (rc > 0)
     {
@@ -184,6 +186,8 @@ static void dohandshake(Connection *self)
 
 static void dowrite(Connection *self)
 {
+    Log_fmt(L_DEBUG, "connection: writing to %s",
+	    Connection_remoteAddr(self));
     WriteRecord *rec = self->writerecs + self->baserecidx;
     void *id = 0;
     if (self->tls)
@@ -298,11 +302,11 @@ static void writeConnection(void *receiver, void *sender, void *args)
 	Connection_remoteAddr(self));
     if (self->tls_connect_st == SSL_ERROR_WANT_WRITE) dohandshake(self);
     else if (self->tls_read_st == SSL_ERROR_WANT_WRITE) doread(self);
-    else if (self->tls_write_st == SSL_ERROR_WANT_WRITE) dowrite(self);
     else
     {
 	if (!self->nrecs)
 	{
+	    self->tls_write_st = 0;
 	    Log_fmt(L_ERROR,
 		    "connection: ready to send to %s with empty buffer",
 		    Connection_remoteAddr(self));
@@ -315,6 +319,8 @@ static void writeConnection(void *receiver, void *sender, void *args)
 
 static void doread(Connection *self)
 {
+    Log_fmt(L_DEBUG, "connection: reading from %s",
+	    Connection_remoteAddr(self));
     if (self->tls)
     {
 	size_t readsz = 0;
@@ -329,6 +335,11 @@ static void doread(Connection *self)
 		Log_fmt(L_DEBUG, "connection: blocking reads from %s",
 			Connection_remoteAddr(self));
 	    }
+	    else
+	    {
+		Log_fmt(L_DEBUG, "connection: done reading from %s",
+			Connection_remoteAddr(self));
+	    }
 	}
 	else
 	{
@@ -336,6 +347,8 @@ static void doread(Connection *self)
 	    if (rc == SSL_ERROR_WANT_READ || rc == SSL_ERROR_WANT_WRITE)
 	    {
 		self->tls_read_st = rc;
+		Log_fmt(L_DEBUG, "connection: reading from %s incomplete: %d",
+			Connection_remoteAddr(self), rc);
 	    }
 	    else
 	    {
@@ -389,15 +402,16 @@ static void readConnection(void *receiver, void *sender, void *args)
 	    Connection_remoteAddr(self));
 
     if (self->tls_connect_st == SSL_ERROR_WANT_READ) dohandshake(self);
-    else if (self->tls_read_st == SSL_ERROR_WANT_READ) doread(self);
     else if (self->tls_write_st == SSL_ERROR_WANT_READ) dowrite(self);
     else
     {
 	if (self->args.handling)
 	{
+	    self->tls_read_st = 0;
 	    Log_fmt(L_WARNING,
 		    "connection: new data while read buffer from %s "
 		    "still handled", Connection_remoteAddr(self));
+	    wantreadwrite(self);
 	    return;
 	}
 	doread(self);
