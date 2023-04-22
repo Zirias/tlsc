@@ -22,6 +22,7 @@ static void usage(const char *prgname)
     fprintf(stderr, "Usage: %s [-f] [-b address] [-p port] host port\n",
 	    prgname);
     fputs("\n\t-b address     only bind to this address instead of any\n"
+	    "\t-f             run in foreground, do not detach\n"
 	    "\t-p port        listen on this port for connections\n"
 	    "\t               (default: same as remote port)\n"
 	    "\thost           remote host to connect to\n"
@@ -83,6 +84,7 @@ int Config_fromOpts(Config *config, int argc, char **argv)
     char *ep;
 
     memset(config, 0, sizeof *config);
+    config->daemonize = 1;
 
     const char *prgname = "tlsc";
     if (argc > 0) prgname = argv[0];
@@ -119,6 +121,10 @@ int Config_fromOpts(Config *config, int argc, char **argv)
 		}
 		switch (*o)
 		{
+		    case 'f':
+			config->daemonize = 0;
+			break;
+
 		    case 'b':
 		    case 'p':
 			if (addArg(needargs, &naidx, *o) < 0) return -1;
