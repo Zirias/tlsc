@@ -12,21 +12,20 @@
 #include "threadopts.h"
 #include "threadpool.h"
 #include "tlsc.h"
+#include "util.h"
 
 #include <stdlib.h>
 #include <syslog.h>
-
-#ifndef PIDFILE
-#define PIDFILE "/var/run/tlsc.pid"
-#endif
 
 #ifndef LOGIDENT
 #define LOGIDENT "tlsc"
 #endif
 
+#define SERVCHUNK 16
+
 static DaemonOpts daemonOpts = {
     .started = 0,
-    .pidfile = PIDFILE,
+    .pidfile = 0,
     .uid = -1,
     .gid = -1,
     .daemonize = 0
@@ -44,7 +43,9 @@ static ThreadOpts threadOpts = {
 };
 
 static const Config *cfg;
-static Server *server = 0;
+static Server **servers = 0;
+static size_t servcapa = 0;
+static size_t servsize = 0;
 
 static void datareceived(void *receiver, void *sender, void *args)
 {
@@ -90,16 +91,20 @@ static void connclosed(void *receiver, void *sender, void *args)
 
 static void newclient(void *receiver, void *sender, void *args)
 {
-    (void)receiver;
     (void)sender;
 
+    const TunnelConfig *tc = receiver;
     Connection *cl = args;
 
-    ClientOpts co = { 0 };
-    co.remotehost = TunnelConfig_remotehost(Config_tunnel(cfg));
-    co.port = TunnelConfig_remoteport(Config_tunnel(cfg));
-    co.numerichosts = 1;
-    co.tls = 1;
+    ClientOpts co = {
+	.remotehost = TunnelConfig_remotehost(tc),
+	.tls_certfile = TunnelConfig_certfile(tc),
+	.tls_keyfile = TunnelConfig_keyfile(tc),
+	.proto = CP_ANY,
+	.port = TunnelConfig_remoteport(tc),
+	.numerichosts = Config_numerichosts(cfg),
+	.tls = 1
+    };
     Connection *sv = Connection_createTcpClient(&co);
 
     Event_register(Connection_closed(cl), sv, connclosed, 0);
@@ -114,18 +119,30 @@ static void svstartup(void *receiver, void *sender, void *args)
 
     StartupEventArgs *ea = args;
 
-    ServerOpts so = { 0 };
-    so.bindhost[0] = TunnelConfig_bindhost(Config_tunnel(cfg));
-    so.port = TunnelConfig_bindport(Config_tunnel(cfg));
-    so.numerichosts = 1;
-    server = Server_createTcp(&so);
-    if (!server)
+    const TunnelConfig *tc = Config_tunnel(cfg);
+    while (tc)
     {
-	ea->rc = EXIT_FAILURE;
-	return;
+	ServerOpts so = { 0 };
+	so.bindhost[0] = TunnelConfig_bindhost(tc);
+	so.port = TunnelConfig_bindport(tc);
+	so.numerichosts = Config_numerichosts(cfg);
+	Server *server = Server_createTcp(&so);
+	if (!server)
+	{
+	    ea->rc = EXIT_FAILURE;
+	    return;
+	}
+	Event_register(Server_clientConnected(server), (void *)tc,
+		newclient, 0);
+	if (servcapa == servsize)
+	{
+	    servcapa += SERVCHUNK;
+	    servers = xrealloc(servers, servcapa * sizeof *servers);
+	}
+	servers[servsize++] = server;
+	tc = TunnelConfig_next(tc);
     }
-
-    Event_register(Server_clientConnected(server), 0, newclient, 0);
+    daemon_launched();
 }
 
 static void svshutdown(void *receiver, void *sender, void *args)
@@ -134,8 +151,14 @@ static void svshutdown(void *receiver, void *sender, void *args)
     (void)sender;
     (void)args;
 
-    Server_destroy(server);
-    server = 0;
+    for (size_t i = 0; i < servsize; ++i)
+    {
+	Server_destroy(servers[i]);
+    }
+    free(servers);
+    servers = 0;
+    servcapa = 0;
+    servsize = 0;
 }
 
 static void daemonized(void)
@@ -168,14 +191,20 @@ static int daemonrun(void *data)
 SOLOCAL int Tlsc_run(const Config *config)
 {
     cfg = config;
-#ifdef DEBUG
-    Log_setMaxLogLevel(L_DEBUG);
-#endif
+
+    if (Config_verbose(cfg))
+    {
+	Log_setMaxLogLevel(L_DEBUG);
+    }
+
     if (Config_daemonize(cfg))
     {
 	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
-	daemonOpts.daemonize = 1;
 	daemonOpts.started = daemonized;
+	daemonOpts.pidfile = Config_pidfile(cfg);
+	daemonOpts.uid = Config_uid(cfg);
+	daemonOpts.gid = Config_gid(cfg);
+	daemonOpts.daemonize = 1;
 	return daemon_run(daemonrun, 0, daemonOpts.pidfile, 1);
     }
     else
