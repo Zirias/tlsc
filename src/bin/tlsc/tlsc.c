@@ -96,8 +96,8 @@ static void newclient(void *receiver, void *sender, void *args)
     Connection *cl = args;
 
     ClientOpts co = { 0 };
-    co.remotehost = cfg->remotehost;
-    co.port = cfg->remoteport;
+    co.remotehost = TunnelConfig_remotehost(Config_tunnel(cfg));
+    co.port = TunnelConfig_remoteport(Config_tunnel(cfg));
     co.numerichosts = 1;
     co.tls = 1;
     Connection *sv = Connection_createTcpClient(&co);
@@ -115,8 +115,8 @@ static void svstartup(void *receiver, void *sender, void *args)
     StartupEventArgs *ea = args;
 
     ServerOpts so = { 0 };
-    so.bindhost[0] = cfg->bindhost;
-    so.port = cfg->bindport;
+    so.bindhost[0] = TunnelConfig_bindhost(Config_tunnel(cfg));
+    so.port = TunnelConfig_bindport(Config_tunnel(cfg));
     so.numerichosts = 1;
     server = Server_createTcp(&so);
     if (!server)
@@ -171,7 +171,7 @@ SOLOCAL int Tlsc_run(const Config *config)
 #ifdef DEBUG
     Log_setMaxLogLevel(L_DEBUG);
 #endif
-    if (cfg->daemonize)
+    if (Config_daemonize(cfg))
     {
 	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
 	daemonOpts.daemonize = 1;
