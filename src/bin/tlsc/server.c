@@ -52,6 +52,7 @@ struct Server
     int fd[MAXSOCKS];
     enum saddrt st[MAXSOCKS];
     int numericHosts;
+    int connwait;
     uint8_t nsocks;
 };
 
@@ -126,7 +127,7 @@ static void acceptConnection(void *receiver, void *sender, void *args)
     ConnOpts co = {
 	.tls_client_certfile = 0,
 	.tls_client_keyfile = 0,
-	.createmode = CCM_NORMAL,
+	.createmode = self->connwait ? CCM_WAIT : CCM_NORMAL,
 	.tls_client = 0
     };
     Connection *newconn = Connection_create(connfd, &co);
@@ -146,7 +147,7 @@ static void acceptConnection(void *receiver, void *sender, void *args)
 }
 
 static Server *Server_create(uint8_t nsocks, int *sockfd, enum saddrt *st,
-	char *path, int numericHosts)
+	char *path, int numericHosts, int connwait)
 {
     if (nsocks < 1 || nsocks > MAXSOCKS)
     {
@@ -161,6 +162,7 @@ static Server *Server_create(uint8_t nsocks, int *sockfd, enum saddrt *st,
     self->conncapa = CONNCHUNK;
     self->connsize = 0;
     self->numericHosts = numericHosts;
+    self->connwait = connwait;
     self->nsocks = nsocks;
     memcpy(self->fd, sockfd, nsocks * sizeof *sockfd);
     memcpy(self->st, st, nsocks * sizeof *st);
@@ -263,7 +265,8 @@ SOLOCAL Server *Server_createTcp(const ServerOpts *opts)
 	return 0;
     }
     
-    Server *self = Server_create(nsocks, fd, st, 0, opts->numerichosts);
+    Server *self = Server_create(nsocks, fd, st, 0, opts->numerichosts,
+	    opts->connwait);
     return self;
 }
 

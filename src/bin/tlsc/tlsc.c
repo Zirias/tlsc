@@ -76,11 +76,12 @@ static void connected(void *receiver, void *sender, void *args)
     Event_register(Connection_dataReceived(sv), cl, datareceived, 0);
     Event_register(Connection_dataSent(cl), sv, datasent, 0);
     Event_register(Connection_dataSent(sv), cl, datasent, 0);
+
+    Connection_activate(cl);
 }
 
 static void connclosed(void *receiver, void *sender, void *args)
 {
-    (void)sender;
     (void)args;
 
     Connection *c = receiver;
@@ -130,6 +131,7 @@ static void svstartup(void *receiver, void *sender, void *args)
 	so.bindhost[0] = TunnelConfig_bindhost(tc);
 	so.port = TunnelConfig_bindport(tc);
 	so.numerichosts = Config_numerichosts(cfg);
+	so.connwait = 1;
 	Server *server = Server_createTcp(&so);
 	if (!server)
 	{

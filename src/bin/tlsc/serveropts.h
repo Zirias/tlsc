@@ -18,6 +18,7 @@ typedef struct ServerOpts
     ServerProto proto;
     int port;
     int numerichosts;
+    int connwait;
 } ServerOpts;
 
 #endif
