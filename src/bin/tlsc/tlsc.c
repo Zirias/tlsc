@@ -148,9 +148,13 @@ static void svstartup(void *receiver, void *sender, void *args)
 	servers[servsize++] = server;
 	tc = TunnelConfig_next(tc);
     }
-    Log_setAsync(1);
-    Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
-    daemon_launched();
+
+    if (Config_daemonize(cfg))
+    {
+	Log_setAsync(1);
+	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
+	daemon_launched();
+    }
 }
 
 static void svshutdown(void *receiver, void *sender, void *args)
