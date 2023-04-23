@@ -173,7 +173,7 @@ static TunnelConfig *parseTunnel(char *arg)
     return tun;
 }
 
-Config *Config_fromOpts(int argc, char **argv)
+SOLOCAL Config *Config_fromOpts(int argc, char **argv)
 {
     int endflags = 0;
     int escapedash = 0;
@@ -273,77 +273,77 @@ silenterror:
     return 0;
 }
 
-const TunnelConfig *Config_tunnel(const Config *self)
+SOLOCAL const TunnelConfig *Config_tunnel(const Config *self)
 {
     return self->tunnel;
 }
 
-const TunnelConfig *TunnelConfig_next(const TunnelConfig *self)
+SOLOCAL const TunnelConfig *TunnelConfig_next(const TunnelConfig *self)
 {
     return self->next;
 }
 
-const char *TunnelConfig_bindhost(const TunnelConfig *self)
+SOLOCAL const char *TunnelConfig_bindhost(const TunnelConfig *self)
 {
     return self->bindhost;
 }
 
-const char *TunnelConfig_remotehost(const TunnelConfig *self)
+SOLOCAL const char *TunnelConfig_remotehost(const TunnelConfig *self)
 {
     return self->remotehost;
 }
 
-const char *TunnelConfig_certfile(const TunnelConfig *self)
+SOLOCAL const char *TunnelConfig_certfile(const TunnelConfig *self)
 {
     return self->certfile;
 }
 
-const char *TunnelConfig_keyfile(const TunnelConfig *self)
+SOLOCAL const char *TunnelConfig_keyfile(const TunnelConfig *self)
 {
     return self->keyfile;
 }
 
-int TunnelConfig_bindport(const TunnelConfig *self)
+SOLOCAL int TunnelConfig_bindport(const TunnelConfig *self)
 {
     return self->bindport;
 }
 
-int TunnelConfig_remoteport(const TunnelConfig *self)
+SOLOCAL int TunnelConfig_remoteport(const TunnelConfig *self)
 {
     return self->remoteport;
 }
 
-const char *Config_pidfile(const Config *self)
+SOLOCAL const char *Config_pidfile(const Config *self)
 {
     return self->pidfile;
 }
 
-long Config_uid(const Config *self)
+SOLOCAL long Config_uid(const Config *self)
 {
     return self->uid;
 }
 
-long Config_gid(const Config *self)
+SOLOCAL long Config_gid(const Config *self)
 {
     return self->gid;
 }
 
-int Config_daemonize(const Config *self)
+SOLOCAL int Config_daemonize(const Config *self)
 {
     return self->daemonize;
 }
 
-int Config_numerichosts(const Config *self)
+SOLOCAL int Config_numerichosts(const Config *self)
 {
     return self->numerichosts;
 }
 
-int Config_verbose(const Config *self)
+SOLOCAL int Config_verbose(const Config *self)
 {
     return self->verbose;
 }
 
-void Config_destroy(Config *self)
+SOLOCAL void Config_destroy(Config *self)
 {
     if (!self) return;
     TunnelConfig *t = self->tunnel;

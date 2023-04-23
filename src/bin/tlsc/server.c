@@ -145,7 +145,7 @@ static void acceptConnection(void *receiver, void *sender, void *args)
     Event_raise(self->clientConnected, 0, newconn);
 }
 
-Server *Server_create(uint8_t nsocks, int *sockfd, enum saddrt *st,
+static Server *Server_create(uint8_t nsocks, int *sockfd, enum saddrt *st,
 	char *path, int numericHosts)
 {
     if (nsocks < 1 || nsocks > MAXSOCKS)
@@ -173,7 +173,7 @@ Server *Server_create(uint8_t nsocks, int *sockfd, enum saddrt *st,
     return self;
 }
 
-Server *Server_createTcp(const ServerOpts *opts)
+SOLOCAL Server *Server_createTcp(const ServerOpts *opts)
 {
     int fd[MAXSOCKS];
     enum saddrt st[MAXSOCKS];
@@ -267,17 +267,17 @@ Server *Server_createTcp(const ServerOpts *opts)
     return self;
 }
 
-Event *Server_clientConnected(Server *self)
+SOLOCAL Event *Server_clientConnected(Server *self)
 {
     return self->clientConnected;
 }
 
-Event *Server_clientDisconnected(Server *self)
+SOLOCAL Event *Server_clientDisconnected(Server *self)
 {
     return self->clientDisconnected;
 }
 
-void Server_destroy(Server *self)
+SOLOCAL void Server_destroy(Server *self)
 {
     if (!self) return;
 

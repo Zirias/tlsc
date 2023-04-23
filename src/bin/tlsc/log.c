@@ -66,13 +66,13 @@ static void writeSyslog(LogLevel level, const char *message, void *data)
     syslog(syslogLevels[level], "%s", message);
 }
 
-SOEXPORT void Log_setFileLogger(FILE *file)
+SOLOCAL void Log_setFileLogger(FILE *file)
 {
     currentwriter = writeFile;
     writerdata = file;
 }
 
-SOEXPORT void Log_setSyslogLogger(const char *ident,
+SOLOCAL void Log_setSyslogLogger(const char *ident,
 	int facility, int withStderr)
 {
     int logopts = LOG_PID;
@@ -82,28 +82,28 @@ SOEXPORT void Log_setSyslogLogger(const char *ident,
     writerdata = 0;
 }
 
-SOEXPORT void Log_setCustomLogger(LogWriter writer, void *data)
+SOLOCAL void Log_setCustomLogger(LogWriter writer, void *data)
 {
     currentwriter = writer;
     writerdata = data;
 }
 
-SOEXPORT void Log_setMaxLogLevel(LogLevel level)
+SOLOCAL void Log_setMaxLogLevel(LogLevel level)
 {
     maxlevel = level;
 }
 
-SOEXPORT void Log_setSilent(int silent)
+SOLOCAL void Log_setSilent(int silent)
 {
     logsilent = silent;
 }
 
-SOEXPORT void Log_setAsync(int async)
+SOLOCAL void Log_setAsync(int async)
 {
     logasync = async;
 }
 
-SOEXPORT void Log_msg(LogLevel level, const char *message)
+SOLOCAL void Log_msg(LogLevel level, const char *message)
 {
     if (!currentwriter) return;
     if (logsilent && level > L_ERROR) return;
@@ -122,7 +122,7 @@ SOEXPORT void Log_msg(LogLevel level, const char *message)
     else currentwriter(level, message, writerdata);
 }
 
-SOEXPORT void Log_fmt(LogLevel level, const char *format, ...)
+SOLOCAL void Log_fmt(LogLevel level, const char *format, ...)
 {
     if (!currentwriter) return;
     if (logsilent && level > L_ERROR) return;
