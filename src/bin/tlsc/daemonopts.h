@@ -3,7 +3,6 @@
 
 typedef struct DaemonOpts
 {
-    void (*started)(void);
     const char *pidfile;
     long uid;
     long gid;

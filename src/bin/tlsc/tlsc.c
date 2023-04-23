@@ -24,7 +24,6 @@
 #define SERVCHUNK 16
 
 static DaemonOpts daemonOpts = {
-    .started = 0,
     .pidfile = 0,
     .uid = -1,
     .gid = -1,
@@ -106,6 +105,11 @@ static void newclient(void *receiver, void *sender, void *args)
 	.tls = 1
     };
     Connection *sv = Connection_createTcpClient(&co);
+    if (!sv)
+    {
+	Connection_close(cl, 0);
+	return;
+    }
 
     Event_register(Connection_closed(cl), sv, connclosed, 0);
     Event_register(Connection_closed(sv), cl, connclosed, 0);
@@ -142,6 +146,8 @@ static void svstartup(void *receiver, void *sender, void *args)
 	servers[servsize++] = server;
 	tc = TunnelConfig_next(tc);
     }
+    Log_setAsync(1);
+    Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
     daemon_launched();
 }
 
@@ -159,11 +165,6 @@ static void svshutdown(void *receiver, void *sender, void *args)
     servers = 0;
     servcapa = 0;
     servsize = 0;
-}
-
-static void daemonized(void)
-{
-    Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
 }
 
 static int daemonrun(void *data)
@@ -200,7 +201,6 @@ SOLOCAL int Tlsc_run(const Config *config)
     if (Config_daemonize(cfg))
     {
 	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
-	daemonOpts.started = daemonized;
 	daemonOpts.pidfile = Config_pidfile(cfg);
 	daemonOpts.uid = Config_uid(cfg);
 	daemonOpts.gid = Config_gid(cfg);
