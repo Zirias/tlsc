@@ -677,6 +677,8 @@ static void deleteLater(Connection *self)
     if (!self) return;
     if (!self->deleteScheduled)
     {
+	Service_unregisterRead(self->fd);
+	Service_unregisterWrite(self->fd);
 	close(self->fd);
 	Event_register(Service_eventsDone(), self, deleteConnection, 0);
 	self->deleteScheduled = 1;
@@ -686,10 +688,18 @@ static void deleteLater(Connection *self)
 SOLOCAL void Connection_destroy(Connection *self)
 {
     if (!self) return;
-    if (self->deleteScheduled == 1) return;
+    if (self->deleteScheduled)
+    {
+	if (self->deleteScheduled == 1) return;
+	Event_unregister(Service_eventsDone(), self, deleteConnection, 0);
+    }
+    else
+    {
+	Service_unregisterRead(self->fd);
+	Service_unregisterWrite(self->fd);
+	close(self->fd);
+    }
 
-    Service_unregisterRead(self->fd);
-    Service_unregisterWrite(self->fd);
     for (; self->nrecs; --self->nrecs)
     {
 	WriteRecord *rec = self->writerecs + self->baserecidx;
@@ -698,14 +708,6 @@ SOLOCAL void Connection_destroy(Connection *self)
 	    Event_raise(self->dataSent, 0, rec->id);
 	}
 	if (++self->baserecidx == NWRITERECS) self->baserecidx = 0;
-    }
-    if (self->deleteScheduled)
-    {
-	Event_unregister(Service_eventsDone(), self, deleteConnection, 0);
-    }
-    else
-    {
-	close(self->fd);
     }
     SSL_free(self->tls);
     if (tls_nconn && !--tls_nconn)
