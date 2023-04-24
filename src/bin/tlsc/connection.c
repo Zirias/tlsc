@@ -728,12 +728,6 @@ SOLOCAL void Connection_destroy(Connection *self)
     Event_unregister(Service_tick(), self, checkPendingConnection, 0);
     Event_unregister(Service_readyRead(), self, readConnection, self->fd);
     Event_unregister(Service_readyWrite(), self, writeConnection, self->fd);
-    if (self->resolveJob)
-    {
-	ThreadPool_cancel(self->resolveJob);
-	Event_unregister(ThreadJob_finished(self->resolveJob), self,
-		resolveRemoteAddrFinished, 0);
-    }
     if (self->deleter) self->deleter(self->data);
     free(self->addr);
     free(self->name);
