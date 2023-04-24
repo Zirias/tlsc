@@ -547,9 +547,12 @@ SOLOCAL const char *Connection_remoteHost(const Connection *self)
 static void resolveRemoteAddrProc(void *arg)
 {
     RemoteAddrResolveArgs *rara = arg;
+    RemoteAddrResolveArgs tmp;
+    memcpy(&tmp, rara, sizeof tmp);
     char buf[NI_MAXSERV];
-    rara->rc = getnameinfo(&rara->sa, rara->addrlen,
-	    rara->name, sizeof rara->name, buf, sizeof buf, NI_NUMERICSERV);
+    tmp.rc = getnameinfo(&tmp.sa, tmp.addrlen,
+	    tmp.name, sizeof tmp.name, buf, sizeof buf, NI_NUMERICSERV);
+    if (!ThreadJob_canceled()) memcpy(rara, &tmp, sizeof *rara);
 }
 
 static void resolveRemoteAddrFinished(void *receiver, void *sender, void *args)
@@ -672,14 +675,25 @@ SOLOCAL void *Connection_data(const Connection *self)
     return self->data;
 }
 
+static void cleanForDelete(Connection *self)
+{
+    Service_unregisterRead(self->fd);
+    Service_unregisterWrite(self->fd);
+    close(self->fd);
+    if (self->resolveJob)
+    {
+	Event_unregister(ThreadJob_finished(self->resolveJob), self,
+		resolveRemoteAddrFinished, 0);
+	ThreadPool_cancel(self->resolveJob);
+    }
+}
+
 static void deleteLater(Connection *self)
 {
     if (!self) return;
     if (!self->deleteScheduled)
     {
-	Service_unregisterRead(self->fd);
-	Service_unregisterWrite(self->fd);
-	close(self->fd);
+	cleanForDelete(self);
 	Event_register(Service_eventsDone(), self, deleteConnection, 0);
 	self->deleteScheduled = 1;
     }
@@ -693,12 +707,7 @@ SOLOCAL void Connection_destroy(Connection *self)
 	if (self->deleteScheduled == 1) return;
 	Event_unregister(Service_eventsDone(), self, deleteConnection, 0);
     }
-    else
-    {
-	Service_unregisterRead(self->fd);
-	Service_unregisterWrite(self->fd);
-	close(self->fd);
-    }
+    else cleanForDelete(self);
 
     for (; self->nrecs; --self->nrecs)
     {
