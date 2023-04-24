@@ -55,6 +55,7 @@ typedef struct Connection
     Event *closed;
     Event *dataReceived;
     Event *dataSent;
+    Event *nameResolved;
     ThreadJob *resolveJob;
     SSL *tls;
     char *addr;
@@ -324,8 +325,8 @@ static void doread(Connection *self)
     if (self->tls)
     {
 	size_t readsz = 0;
-	int rc = SSL_read_ex(self->tls, self->rdbuf, CONNBUFSZ, &readsz);
-	if (rc > 0)
+	int ret = SSL_read_ex(self->tls, self->rdbuf, CONNBUFSZ, &readsz);
+	if (ret > 0)
 	{
 	    self->tls_read_st = 0;
 	    self->args.size = readsz;
@@ -343,7 +344,7 @@ static void doread(Connection *self)
 	}
 	else
 	{
-	    rc = SSL_get_error(self->tls, rc);
+	    int rc = SSL_get_error(self->tls, ret);
 	    if (rc == SSL_ERROR_WANT_READ || rc == SSL_ERROR_WANT_WRITE)
 	    {
 		self->tls_read_st = rc;
@@ -352,8 +353,11 @@ static void doread(Connection *self)
 	    }
 	    else
 	    {
-		Log_fmt(L_WARNING, "connection: error reading from %s",
-			Connection_remoteAddr(self));
+		if (ret < 0)
+		{
+		    Log_fmt(L_WARNING, "connection: error reading from %s",
+			    Connection_remoteAddr(self));
+		}
 		Connection_close(self, 0);
 		return;
 	    }
@@ -435,6 +439,7 @@ SOLOCAL Connection *Connection_create(int fd, const ConnOpts *opts)
     self->closed = Event_create(self);
     self->dataReceived = Event_create(self);
     self->dataSent = Event_create(self);
+    self->nameResolved = Event_create(self);
     self->resolveJob = 0;
     self->fd = fd;
     self->connecting = 0;
@@ -533,6 +538,11 @@ SOLOCAL Event *Connection_dataSent(Connection *self)
     return self->dataSent;
 }
 
+SOLOCAL Event *Connection_nameResolved(Connection *self)
+{
+    return self->nameResolved;
+}
+
 SOLOCAL const char *Connection_remoteAddr(const Connection *self)
 {
     if (!self->addr) return "<unknown>";
@@ -580,6 +590,7 @@ static void resolveRemoteAddrFinished(void *receiver, void *sender, void *args)
 		self->addr);
     }
     self->resolveJob = 0;
+    Event_raise(self->nameResolved, 0, 0);
 }
 
 SOLOCAL void Connection_setRemoteAddr(Connection *self,
@@ -605,6 +616,7 @@ SOLOCAL void Connection_setRemoteAddr(Connection *self,
 			resolveRemoteAddrFinished, 0);
 		ThreadPool_enqueue(self->resolveJob);
 	    }
+	    else Event_raise(self->nameResolved, 0, 0);
 	}
     }
 }
@@ -731,6 +743,7 @@ SOLOCAL void Connection_destroy(Connection *self)
     if (self->deleter) self->deleter(self->data);
     free(self->addr);
     free(self->name);
+    Event_destroy(self->nameResolved);
     Event_destroy(self->dataSent);
     Event_destroy(self->dataReceived);
     Event_destroy(self->closed);

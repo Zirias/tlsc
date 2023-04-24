@@ -27,6 +27,8 @@ Event *Connection_dataReceived(Connection *self)
     CMETHOD ATTR_RETNONNULL ATTR_PURE;
 Event *Connection_dataSent(Connection *self)
     CMETHOD ATTR_RETNONNULL ATTR_PURE;
+Event *Connection_nameResolved(Connection *self)
+    CMETHOD ATTR_RETNONNULL ATTR_PURE;
 const char *Connection_remoteAddr(const Connection *self)
     CMETHOD ATTR_RETNONNULL ATTR_PURE;
 const char *Connection_remoteHost(const Connection *self)

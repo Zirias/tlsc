@@ -65,6 +65,25 @@ static void datasent(void *receiver, void *sender, void *args)
     Connection_confirmDataReceived(c);
 }
 
+static void nameresolved(void *receiver, void *sender, void *args)
+{
+    (void)args;
+
+    Connection *cl = receiver;
+    Connection *sv = sender;
+
+    if (cl)
+    {
+	Log_fmt(L_INFO, "Tlsc: client connected from %s",
+		Connection_remoteHost(cl));
+    }
+    else
+    {
+	Log_fmt(L_INFO, "Tlsc: connected to server %s",
+		Connection_remoteHost(sv));
+    }
+}
+
 static void connected(void *receiver, void *sender, void *args)
 {
     (void)args;
@@ -93,6 +112,8 @@ static void connclosed(void *receiver, void *sender, void *args)
 	Event_unregister(Connection_dataReceived(o), c, datareceived, 0);
 	Event_unregister(Connection_dataSent(c), o, datasent, 0);
 	Event_unregister(Connection_dataSent(o), c, datasent, 0);
+	Log_fmt(L_INFO, "Tlsc: connection %s <-> %s closed",
+		Connection_remoteHost(c), Connection_remoteHost(o));
     }
     else
     {
@@ -125,6 +146,8 @@ static void newclient(void *receiver, void *sender, void *args)
 	return;
     }
 
+    Event_register(Connection_nameResolved(cl), cl, nameresolved, 0);
+    Event_register(Connection_nameResolved(sv), 0, nameresolved, 0);
     Event_register(Connection_closed(cl), sv, connclosed, 0);
     Event_register(Connection_closed(sv), cl, connclosed, 0);
     Event_register(Connection_connected(sv), cl, connected, 0);
