@@ -188,9 +188,6 @@ SOLOCAL int daemon_run(const daemon_main dmain, void *data,
     sigaction(SIGINT, &handler, 0);
     sigaction(SIGHUP, &handler, 0);
     sigaction(SIGUSR1, &handler, 0);
-#ifndef DEBUG
-    sigaction(SIGSTOP, &handler, 0);
-#endif
 
     pid = fork();
 
