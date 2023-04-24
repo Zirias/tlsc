@@ -160,7 +160,7 @@ static void stopThreads(int nthr)
     {
 	if (pthread_kill(threads[i].handle, 0) >= 0)
 	{
-	    if (threads[i].job)
+	    if (pthread_mutex_trylock(&threads[i].startlock) != 0)
 	    {
 		threads[i].stoprq = 1;
 		pthread_kill(threads[i].handle, SIGUSR1);
@@ -169,7 +169,6 @@ static void stopThreads(int nthr)
 	    }
 	    else
 	    {
-		pthread_mutex_lock(&threads[i].startlock);
 		threads[i].stoprq = 1;
 		pthread_cond_signal(&threads[i].start);
 		pthread_mutex_unlock(&threads[i].startlock);
