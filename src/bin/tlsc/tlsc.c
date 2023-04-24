@@ -82,11 +82,24 @@ static void connected(void *receiver, void *sender, void *args)
 
 static void connclosed(void *receiver, void *sender, void *args)
 {
-    (void)args;
+    Connection *c = sender;
+    Connection *o = receiver;
 
-    Connection *c = receiver;
-    Event_unregister(Connection_closed(c), sender, connclosed, 0);
-    Connection_close(c, 0);
+    Event_unregister(Connection_closed(o), c, connclosed, 0);
+    Event_unregister(Connection_closed(c), o, connclosed, 0);
+    if (args)
+    {
+	Event_unregister(Connection_dataReceived(c), o, datareceived, 0);
+	Event_unregister(Connection_dataReceived(o), c, datareceived, 0);
+	Event_unregister(Connection_dataSent(c), o, datasent, 0);
+	Event_unregister(Connection_dataSent(o), c, datasent, 0);
+    }
+    else
+    {
+	Event_unregister(Connection_connected(c), o, connected, 0);
+    }
+
+    Connection_close(o, 0);
 }
 
 static void newclient(void *receiver, void *sender, void *args)
