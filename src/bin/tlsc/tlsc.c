@@ -69,19 +69,15 @@ static void nameresolved(void *receiver, void *sender, void *args)
 {
     (void)args;
 
-    Connection *cl = receiver;
-    Connection *sv = sender;
-
-    if (cl)
+    const char *fmt = "Tlsc: connected to server %s:%d";
+    const Connection *c = sender;
+    if (receiver)
     {
-	Log_fmt(L_INFO, "Tlsc: client connected from %s",
-		Connection_remoteHost(cl));
+	fmt = "Tlsc: client connected from %s:%d";
     }
-    else
-    {
-	Log_fmt(L_INFO, "Tlsc: connected to server %s",
-		Connection_remoteHost(sv));
-    }
+    const char *host = Connection_remoteHost(c);
+    if (!host) host = Connection_remoteAddr(c);
+    Log_fmt(L_INFO, fmt, host, Connection_remotePort(c));
 }
 
 static void connected(void *receiver, void *sender, void *args)
@@ -112,8 +108,13 @@ static void connclosed(void *receiver, void *sender, void *args)
 	Event_unregister(Connection_dataReceived(o), c, datareceived, 0);
 	Event_unregister(Connection_dataSent(c), o, datasent, 0);
 	Event_unregister(Connection_dataSent(o), c, datasent, 0);
-	Log_fmt(L_INFO, "Tlsc: connection %s <-> %s closed",
-		Connection_remoteHost(c), Connection_remoteHost(o));
+	const char *chost = Connection_remoteHost(c);
+	if (!chost) chost = Connection_remoteAddr(c);
+	const char *ohost = Connection_remoteHost(o);
+	if (!ohost) ohost = Connection_remoteAddr(o);
+	Log_fmt(L_INFO, "Tlsc: connection %s:%d <-> %s:%d closed",
+		chost, Connection_remotePort(c),
+		ohost, Connection_remotePort(o));
     }
     else
     {
