@@ -23,6 +23,21 @@
 
 #define SERVCHUNK 16
 
+typedef struct ServCtx
+{
+    Server *server;
+    const TunnelConfig *tc;
+} ServCtx;
+
+typedef struct ConnCtx
+{
+    Connection *client;
+    Connection *service;
+    const char *chost;
+    const char *shost;
+    int connected;
+} ConnCtx;
+
 static DaemonOpts daemonOpts = {
     .pidfile = 0,
     .uid = -1,
@@ -42,7 +57,7 @@ static ThreadOpts threadOpts = {
 };
 
 static const Config *cfg;
-static Server **servers = 0;
+static ServCtx *servers = 0;
 static size_t servcapa = 0;
 static size_t servsize = 0;
 
@@ -65,43 +80,61 @@ static void datasent(void *receiver, void *sender, void *args)
     Connection_confirmDataReceived(c);
 }
 
+static void logconnected(ConnCtx *ctx)
+{
+    if (ctx->chost && ctx->shost && ctx->connected)
+    {
+	Log_fmt(L_INFO, "Tlsc: connected %s:%d -> %s:%d",
+		ctx->chost, Connection_remotePort(ctx->client),
+		ctx->shost, Connection_remotePort(ctx->service));
+    }
+}
+
 static void nameresolved(void *receiver, void *sender, void *args)
 {
     (void)args;
 
-    const char *fmt = "Tlsc: connected to server %s:%d";
-    const Connection *c = sender;
-    if (receiver)
-    {
-	fmt = "Tlsc: client connected from %s:%d";
-    }
-    const char *host = Connection_remoteHost(c);
-    if (!host) host = Connection_remoteAddr(c);
-    Log_fmt(L_INFO, fmt, host, Connection_remotePort(c));
+    ConnCtx *ctx = receiver;
+    Connection *c = sender;
+
+    if (c == ctx->client) ctx->chost = Connection_remoteHost(c);
+    else ctx->shost = Connection_remoteHost(c);
+
+    logconnected(ctx);
 }
 
 static void connected(void *receiver, void *sender, void *args)
 {
     (void)args;
 
-    Connection *cl = receiver;
+    ConnCtx *ctx = receiver;
     Connection *sv = sender;
+    Connection *cl = ctx->client;
 
     Event_register(Connection_dataReceived(cl), sv, datareceived, 0);
     Event_register(Connection_dataReceived(sv), cl, datareceived, 0);
     Event_register(Connection_dataSent(cl), sv, datasent, 0);
     Event_register(Connection_dataSent(sv), cl, datasent, 0);
 
+    ctx->connected = 1;
+    if (Config_numerichosts(cfg))
+    {
+	ctx->chost = Connection_remoteAddr(cl);
+	ctx->shost = Connection_remoteAddr(sv);
+    }
+    logconnected(ctx);
+
     Connection_activate(cl);
 }
 
 static void connclosed(void *receiver, void *sender, void *args)
 {
+    ConnCtx *ctx = receiver;
     Connection *c = sender;
-    Connection *o = receiver;
+    Connection *o = (c == ctx->client) ? ctx->service : ctx->client;
 
-    Event_unregister(Connection_closed(o), c, connclosed, 0);
-    Event_unregister(Connection_closed(c), o, connclosed, 0);
+    Event_unregister(Connection_closed(o), ctx, connclosed, 0);
+    Event_unregister(Connection_closed(c), ctx, connclosed, 0);
     if (args)
     {
 	Event_unregister(Connection_dataReceived(c), o, datareceived, 0);
@@ -118,25 +151,26 @@ static void connclosed(void *receiver, void *sender, void *args)
     }
     else
     {
-	Event_unregister(Connection_connected(c), o, connected, 0);
+	Event_unregister(Connection_connected(c), ctx, connected, 0);
     }
 
     Connection_close(o, 0);
+    free(ctx);
 }
 
 static void newclient(void *receiver, void *sender, void *args)
 {
     (void)sender;
 
-    const TunnelConfig *tc = receiver;
+    ServCtx *ctx = receiver;
     Connection *cl = args;
 
     ClientOpts co = {
-	.remotehost = TunnelConfig_remotehost(tc),
-	.tls_certfile = TunnelConfig_certfile(tc),
-	.tls_keyfile = TunnelConfig_keyfile(tc),
+	.remotehost = TunnelConfig_remotehost(ctx->tc),
+	.tls_certfile = TunnelConfig_certfile(ctx->tc),
+	.tls_keyfile = TunnelConfig_keyfile(ctx->tc),
 	.proto = CP_ANY,
-	.port = TunnelConfig_remoteport(tc),
+	.port = TunnelConfig_remoteport(ctx->tc),
 	.numerichosts = Config_numerichosts(cfg),
 	.tls = 1
     };
@@ -147,11 +181,21 @@ static void newclient(void *receiver, void *sender, void *args)
 	return;
     }
 
-    Event_register(Connection_nameResolved(cl), cl, nameresolved, 0);
-    Event_register(Connection_nameResolved(sv), 0, nameresolved, 0);
-    Event_register(Connection_closed(cl), sv, connclosed, 0);
-    Event_register(Connection_closed(sv), cl, connclosed, 0);
-    Event_register(Connection_connected(sv), cl, connected, 0);
+    ConnCtx *cctx = xmalloc(sizeof *cctx);
+    cctx->client = cl;
+    cctx->service = sv;
+    cctx->chost = 0;
+    cctx->shost = 0;
+    cctx->connected = 0;
+
+    if (!Config_numerichosts(cfg))
+    {
+	Event_register(Connection_nameResolved(cl), cctx, nameresolved, 0);
+	Event_register(Connection_nameResolved(sv), cctx, nameresolved, 0);
+    }
+    Event_register(Connection_closed(cl), cctx, connclosed, 0);
+    Event_register(Connection_closed(sv), cctx, connclosed, 0);
+    Event_register(Connection_connected(sv), cctx, connected, 0);
 }
 
 static void svstartup(void *receiver, void *sender, void *args)
@@ -175,14 +219,15 @@ static void svstartup(void *receiver, void *sender, void *args)
 	    ea->rc = EXIT_FAILURE;
 	    return;
 	}
-	Event_register(Server_clientConnected(server), (void *)tc,
-		newclient, 0);
 	if (servcapa == servsize)
 	{
 	    servcapa += SERVCHUNK;
 	    servers = xrealloc(servers, servcapa * sizeof *servers);
 	}
-	servers[servsize++] = server;
+	servers[servsize].server = server;
+	servers[servsize].tc = tc;
+	Event_register(Server_clientConnected(server), &servers[servsize++],
+		newclient, 0);
 	tc = TunnelConfig_next(tc);
     }
 
@@ -202,7 +247,7 @@ static void svshutdown(void *receiver, void *sender, void *args)
 
     for (size_t i = 0; i < servsize; ++i)
     {
-	Server_destroy(servers[i]);
+	Server_destroy(servers[i].server);
     }
     free(servers);
     servers = 0;
