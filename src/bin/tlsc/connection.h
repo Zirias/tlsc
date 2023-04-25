@@ -33,6 +33,8 @@ const char *Connection_remoteAddr(const Connection *self)
     CMETHOD ATTR_RETNONNULL ATTR_PURE;
 const char *Connection_remoteHost(const Connection *self)
     CMETHOD ATTR_PURE;
+int Connection_remotePort(const Connection *self)
+    CMETHOD ATTR_PURE;
 void Connection_setRemoteAddr(Connection *self,
 	struct sockaddr *addr, socklen_t addrlen, int numericOnly)
     CMETHOD ATTR_NONNULL((2));

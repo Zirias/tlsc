@@ -67,6 +67,7 @@ typedef struct Connection
     RemoteAddrResolveArgs resolveArgs;
     int fd;
     int connecting;
+    int port;
     int tls_connect_st;
     int tls_connect_ticks;
     int tls_read_st;
@@ -443,6 +444,7 @@ SOLOCAL Connection *Connection_create(int fd, const ConnOpts *opts)
     self->resolveJob = 0;
     self->fd = fd;
     self->connecting = 0;
+    self->port = 0;
     self->addr = 0;
     self->name = 0;
     self->data = 0;
@@ -554,6 +556,11 @@ SOLOCAL const char *Connection_remoteHost(const Connection *self)
     return self->name;
 }
 
+SOLOCAL int Connection_remotePort(const Connection *self)
+{
+    return self->port;
+}
+
 static void resolveRemoteAddrProc(void *arg)
 {
     RemoteAddrResolveArgs *rara = arg;
@@ -604,6 +611,7 @@ SOLOCAL void Connection_setRemoteAddr(Connection *self,
 		servbuf, sizeof servbuf, NI_NUMERICHOST|NI_NUMERICSERV) >= 0)
     {
 	self->addr = copystr(hostbuf);
+	sscanf(servbuf, "%d", &self->port);
 	if (!self->resolveJob)
 	{
 	    memcpy(&self->resolveArgs.sa, addr, addrlen);
