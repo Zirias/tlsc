@@ -612,19 +612,15 @@ SOLOCAL void Connection_setRemoteAddr(Connection *self,
     {
 	self->addr = copystr(hostbuf);
 	sscanf(servbuf, "%d", &self->port);
-	if (!self->resolveJob)
+	if (!self->resolveJob && !numericOnly && ThreadPool_active())
 	{
 	    memcpy(&self->resolveArgs.sa, addr, addrlen);
 	    self->resolveArgs.addrlen = addrlen;
-	    if (!numericOnly && ThreadPool_active())
-	    {
-		self->resolveJob = ThreadJob_create(resolveRemoteAddrProc,
-			&self->resolveArgs, RESOLVTICKS);
-		Event_register(ThreadJob_finished(self->resolveJob), self,
-			resolveRemoteAddrFinished, 0);
-		ThreadPool_enqueue(self->resolveJob);
-	    }
-	    else Event_raise(self->nameResolved, 0, 0);
+	    self->resolveJob = ThreadJob_create(resolveRemoteAddrProc,
+		    &self->resolveArgs, RESOLVTICKS);
+	    Event_register(ThreadJob_finished(self->resolveJob), self,
+		    resolveRemoteAddrFinished, 0);
+	    ThreadPool_enqueue(self->resolveJob);
 	}
     }
 }
