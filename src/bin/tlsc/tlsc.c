@@ -158,6 +158,33 @@ static void connclosed(void *receiver, void *sender, void *args)
     free(ctx);
 }
 
+static void svConnCreated(void *receiver, Connection *sv)
+{
+    Connection *cl = receiver;
+
+    if (!sv)
+    {
+	Connection_close(cl, 0);
+	return;
+    }
+
+    ConnCtx *ctx = xmalloc(sizeof *ctx);
+    ctx->client = cl;
+    ctx->service = sv;
+    ctx->chost = 0;
+    ctx->shost = 0;
+    ctx->connected = 0;
+
+    if (!Config_numerichosts(cfg))
+    {
+	Event_register(Connection_nameResolved(cl), ctx, nameresolved, 0);
+	Event_register(Connection_nameResolved(sv), ctx, nameresolved, 0);
+    }
+    Event_register(Connection_closed(cl), ctx, connclosed, 0);
+    Event_register(Connection_closed(sv), ctx, connclosed, 0);
+    Event_register(Connection_connected(sv), ctx, connected, 0);
+}
+
 static void newclient(void *receiver, void *sender, void *args)
 {
     (void)sender;
@@ -174,28 +201,10 @@ static void newclient(void *receiver, void *sender, void *args)
 	.numerichosts = Config_numerichosts(cfg),
 	.tls = 1
     };
-    Connection *sv = Connection_createTcpClient(&co);
-    if (!sv)
+    if (Connection_createTcpClientAsync(&co, cl, svConnCreated) < 0)
     {
 	Connection_close(cl, 0);
-	return;
     }
-
-    ConnCtx *cctx = xmalloc(sizeof *cctx);
-    cctx->client = cl;
-    cctx->service = sv;
-    cctx->chost = 0;
-    cctx->shost = 0;
-    cctx->connected = 0;
-
-    if (!Config_numerichosts(cfg))
-    {
-	Event_register(Connection_nameResolved(cl), cctx, nameresolved, 0);
-	Event_register(Connection_nameResolved(sv), cctx, nameresolved, 0);
-    }
-    Event_register(Connection_closed(cl), cctx, connclosed, 0);
-    Event_register(Connection_closed(sv), cctx, connclosed, 0);
-    Event_register(Connection_connected(sv), cctx, connected, 0);
 }
 
 static void svstartup(void *receiver, void *sender, void *args)
