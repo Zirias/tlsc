@@ -7,6 +7,7 @@
 #include "threadpool.h"
 #include "util.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -34,7 +35,6 @@ typedef struct Thread
     pthread_cond_t start;
     pthread_cond_t done;
     int pipefd[2];
-    int failed;
     int stoprq;
 } Thread;
 
@@ -73,35 +73,17 @@ static void workerInterrupt(int signum)
 static void *worker(void *arg)
 {
     Thread *t = arg;
-    t->failed = 0;
-    t->stoprq = 0;
-    if (pthread_mutex_lock(&t->startlock) < 0)
-    {
-	t->failed = 1;
-	write(t->pipefd[1], "1", 1);
-	return 0;
-    }
 
     struct sigaction handler;
     memset(&handler, 0, sizeof handler);
     handler.sa_handler = workerInterrupt;
     sigemptyset(&handler.sa_mask);
     sigaddset(&handler.sa_mask, SIGUSR1);
+    if (sigaction(SIGUSR1, &handler, 0) < 0) return 0;
+    if (pthread_sigmask(SIG_UNBLOCK, &handler.sa_mask, 0) < 0) return 0;
 
-    if (sigaction(SIGUSR1, &handler, 0) < 0)
-    {
-	t->failed = 1;
-	write(t->pipefd[1], "1", 1);
-	return 0;
-    }
-
-    if (pthread_sigmask(SIG_UNBLOCK, &handler.sa_mask, 0) < 0)
-    {
-	t->failed = 1;
-	write(t->pipefd[1], "1", 1);
-	return 0;
-    }
-
+    if (pthread_mutex_lock(&t->startlock) < 0) return 0;
+    t->stoprq = 0;
     while (!t->stoprq)
     {
 	jobcanceled = 0;
@@ -225,8 +207,20 @@ static Thread *availableThread(void)
 
 static void startThreadJob(Thread *t, ThreadJob *j)
 {
+    if (pthread_kill(t->handle, 0) == ESRCH)
+    {
+	pthread_join(t->handle, 0);
+	Log_msg(L_WARNING, "threadpool: restarting failed thread");
+	if (pthread_create(&t->handle, 0, worker, t) < 0)
+	{
+	    Log_msg(L_FATAL, "threadpool: error restarting thread");
+	    Service_quit();
+	}
+	return;
+    }
     pthread_mutex_lock(&t->startlock);
     t->job = j;
+    Service_registerRead(t->pipefd[0]);
     pthread_cond_signal(&t->start);
     pthread_mutex_lock(&t->donelock);
     pthread_mutex_unlock(&t->startlock);
@@ -238,19 +232,9 @@ static void threadJobDone(void *receiver, void *sender, void *args)
     (void)args;
 
     Thread *t = receiver;
+    Service_unregisterRead(t->pipefd[0]);
     char buf[2];
     read(t->pipefd[0], buf, sizeof buf);
-    if (t->failed)
-    {
-	pthread_join(t->handle, 0);
-	Log_msg(L_WARNING, "threadpool: restarting failed thread");
-	if (pthread_create(&t->handle, 0, worker, t) < 0)
-	{
-	    Log_msg(L_FATAL, "threadpool: error restarting thread");
-	    Service_quit();
-	}
-	return;
-    }
     pthread_cond_wait(&t->done, &t->donelock);
     if (t->job->panicmsg)
     {
@@ -383,7 +367,6 @@ SOLOCAL int ThreadPool_init(const ThreadOpts *opts)
 		    threads[i].pipefd[0]);
 	    goto rollback_pipe;
 	}
-	Service_registerRead(threads[i].pipefd[0]);
 	continue;
 
 rollback_pipe:
