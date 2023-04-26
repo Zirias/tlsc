@@ -3,7 +3,10 @@
 #include "client.h"
 #include "clientopts.h"
 #include "connection.h"
+#include "event.h"
 #include "log.h"
+#include "threadpool.h"
+#include "util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -23,6 +26,14 @@ typedef struct BlacklistEntry
     struct sockaddr_storage val;
     int hits;
 } BlacklistEntry;
+
+typedef struct ResolveJobData
+{
+    struct addrinfo *res0;
+    void *receiver;
+    ClientCreatedHandler callback;
+    ClientOpts opts;
+} ResolveJobData;
 
 static BlacklistEntry blacklist[BLACKLISTSIZE];
 
@@ -51,22 +62,12 @@ static int blacklistcheck(socklen_t len, struct sockaddr *addr)
     return 1;
 }
 
-SOLOCAL Connection *Connection_createTcpClient(const ClientOpts *opts)
+static Connection *createFromAddrinfo(const ClientOpts *opts,
+	struct addrinfo *res0)
 {
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_ADDRCONFIG|AI_NUMERICSERV;
-    char portstr[6];
-    snprintf(portstr, 6, "%d", opts->port);
-    struct addrinfo *res, *res0;
-    if (getaddrinfo(opts->remotehost, portstr, &hints, &res0) < 0)
-    {
-	Log_msg(L_ERROR, "client: cannot get address info");
-	return 0;
-    }
+    struct addrinfo *res;
     int fd = -1;
+
     for (res = res0; res; res = res->ai_next)
     {
 	if (res->ai_family != AF_INET && res->ai_family != AF_INET6) continue;
@@ -102,5 +103,68 @@ SOLOCAL Connection *Connection_createTcpClient(const ClientOpts *opts)
 	    opts->numerichosts);
     freeaddrinfo(res0);
     return conn;
+}
+
+static struct addrinfo *resolveAddress(const ClientOpts *opts)
+{
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_ADDRCONFIG|AI_NUMERICSERV;
+    char portstr[6];
+    snprintf(portstr, 6, "%d", opts->port);
+    struct addrinfo *res0;
+    if (getaddrinfo(opts->remotehost, portstr, &hints, &res0) < 0)
+    {
+	Log_msg(L_ERROR, "client: cannot get address info");
+	return 0;
+    }
+    return res0;
+}
+
+static void doResolve(void *arg)
+{
+    ResolveJobData *data = arg;
+    data->res0 = resolveAddress(&data->opts);
+}
+
+static void resolveDone(void *receiver, void *sender, void *args)
+{
+    (void)receiver;
+    (void)sender;
+
+    ResolveJobData *data = args;
+    if (!data->res0) data->callback(data->receiver, 0);
+    else data->callback(data->receiver,
+	    createFromAddrinfo(&data->opts, data->res0));
+    free(data);
+}
+
+SOLOCAL Connection *Connection_createTcpClient(const ClientOpts *opts)
+{
+    struct addrinfo *res0 = resolveAddress(opts);
+    if (!res0) return 0;
+    return createFromAddrinfo(opts, res0);
+}
+
+SOLOCAL int Connection_createTcpClientAsync(const ClientOpts *opts,
+	void *receiver, ClientCreatedHandler callback)
+{
+    if (!ThreadPool_active())
+    {
+	Log_msg(L_ERROR, "client: async creation requires active ThreadPool");
+	return -1;
+    }
+
+    ResolveJobData *data = xmalloc(sizeof *data);
+    data->res0 = 0;
+    data->receiver = receiver;
+    data->callback = callback;
+    memcpy(&data->opts, opts, sizeof *opts);
+    ThreadJob *resolveJob = ThreadJob_create(doResolve, data, 0);
+    Event_register(ThreadJob_finished(resolveJob), 0, resolveDone, 0);
+    ThreadPool_enqueue(resolveJob);
+    return 0;
 }
 
