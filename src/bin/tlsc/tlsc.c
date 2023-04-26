@@ -15,6 +15,7 @@
 #include "util.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <syslog.h>
 
 #ifndef LOGIDENT
@@ -97,8 +98,8 @@ static void nameresolved(void *receiver, void *sender, void *args)
     ConnCtx *ctx = receiver;
     Connection *c = sender;
 
-    if (c == ctx->client) ctx->chost = Connection_remoteHost(c);
-    else ctx->shost = Connection_remoteHost(c);
+    if (c == ctx->service) ctx->shost = Connection_remoteHost(c);
+    else ctx->chost = Connection_remoteHost(c);
 
     logconnected(ctx);
 }
@@ -160,27 +161,22 @@ static void connclosed(void *receiver, void *sender, void *args)
 
 static void svConnCreated(void *receiver, Connection *sv)
 {
-    Connection *cl = receiver;
+    ConnCtx *ctx = receiver;
 
     if (!sv)
     {
-	Connection_close(cl, 0);
+	Connection_close(ctx->client, 0);
+	free(ctx);
 	return;
     }
 
-    ConnCtx *ctx = xmalloc(sizeof *ctx);
-    ctx->client = cl;
     ctx->service = sv;
-    ctx->chost = 0;
-    ctx->shost = 0;
-    ctx->connected = 0;
 
     if (!Config_numerichosts(cfg))
     {
-	Event_register(Connection_nameResolved(cl), ctx, nameresolved, 0);
 	Event_register(Connection_nameResolved(sv), ctx, nameresolved, 0);
     }
-    Event_register(Connection_closed(cl), ctx, connclosed, 0);
+    Event_register(Connection_closed(ctx->client), ctx, connclosed, 0);
     Event_register(Connection_closed(sv), ctx, connclosed, 0);
     Event_register(Connection_connected(sv), ctx, connected, 0);
 }
@@ -201,9 +197,19 @@ static void newclient(void *receiver, void *sender, void *args)
 	.numerichosts = Config_numerichosts(cfg),
 	.tls = 1
     };
-    if (Connection_createTcpClientAsync(&co, cl, svConnCreated) < 0)
+
+    ConnCtx *cctx = xmalloc(sizeof *cctx);
+    memset(cctx, 0, sizeof *cctx);
+    cctx->client = cl;
+
+    if (Connection_createTcpClientAsync(&co, cctx, svConnCreated) < 0)
     {
 	Connection_close(cl, 0);
+	free(cctx);
+    }
+    if (!Config_numerichosts(cfg))
+    {
+	Event_register(Connection_nameResolved(cl), cctx, nameresolved, 0);
     }
 }
 
