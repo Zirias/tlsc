@@ -115,9 +115,9 @@ static struct addrinfo *resolveAddress(const ClientOpts *opts)
     char portstr[6];
     snprintf(portstr, 6, "%d", opts->port);
     struct addrinfo *res0;
-    if (getaddrinfo(opts->remotehost, portstr, &hints, &res0) < 0)
+    if (getaddrinfo(opts->remotehost, portstr, &hints, &res0) < 0 || !res0)
     {
-	Log_msg(L_ERROR, "client: cannot get address info");
+	Log_fmt(L_ERROR, "client: error resolving %s", opts->remotehost);
 	return 0;
     }
     return res0;
