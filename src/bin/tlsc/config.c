@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <grp.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -38,6 +39,9 @@ struct TunnelConfig
     const char *keyfile;
     int bindport;
     int remoteport;
+    int blacklisthits;
+    Proto serverproto;
+    Proto clientproto;
 };
 
 static int addArg(char *args, int *idx, char opt)
@@ -54,17 +58,37 @@ static void usage(const char *prgname)
 static void usage(const char *prgname)
 {
     fprintf(stderr,
-	    "Usage: %s [-fnv] [-g group] [-p pidfile] [-u user]\n"
+	    "Usage: %s [-fnv] [-b hits] [-g group] [-p pidfile] [-u user]\n"
 	    "       tunspec [tunspec ...]\n", prgname);
     fputs("\n\ttunspec        description of a tunnel in the format\n"
-	    "\t               host:port:remotehost[:remoteport[:cert:key]]\n"
+	    "\t               host:port:remotehost[:remoteport][:k=v[:...]]\n"
 	    "\t               using these values:\n\n"
 	    "\t\thost        hostname or IP address to bind to and listen\n"
 	    "\t\tport        port to listen on\n"
 	    "\t\tremotehost  remote host name to forward to with TLS\n"
 	    "\t\tremoteport  port of remote service, default: same as `port`\n"
-	    "\t\tcert        a certificate file to present to the remote\n"
-	    "\t\tkey         the key file for the certificate\n"
+	    "\t\tk=v         key-value pair of additional tunnel options,\n"
+	    "\t\t            the following are available:\n"
+	    "\t\t  b=hits    a positive number enables blacklisting\n"
+	    "\t\t            specific socket addresses for `hits`\n"
+	    "\t\t            connection attempts after failure to connect\n"
+	    "\t\t  c=cert    `cert` is used as a client certificate file to\n"
+	    "\t\t            present to the remote\n"
+	    "\t\t  k=key     `key` is the key file for the certificate\n"
+	    "\t\t  p=[4|6]   only use IPv4 or IPv6\n"
+	    "\t\t  pc=[4|6]  only use IPv4 or IPv6 when connecting as client\n"
+	    "\t\t  ps=[4|6]  only use IPv4 or IPv6 when listening as server\n"
+	    "\n"
+	    "\t               Example:\n"
+	    "\n"
+	    "\t               \"localhost:12345:foo.example:443:b=2:pc=6\"\n"
+	    "\n"
+	    "\t               This will listen on localhost:12345 using any\n"
+	    "\t               IP version available, and connect clients to\n"
+	    "\t               foo.example:443 with TLS using only IPv6.\n"
+	    "\t               Specific socket addresses of foo.example:443\n"
+	    "\t               will be blacklisted for 2 hits after a\n"
+	    "\t               connection error.\n"
 	    "\n"
 	    "\t-f             run in foreground, do not detach\n"
 	    "\t-g group       group name/id to run as\n"
@@ -141,26 +165,111 @@ static int optArg(Config *config, char *args, int *idx, char *op)
     return 0;
 }
 
+static char *tuntok(char *str, char sep)
+{
+    static char *s;
+    if (str) s = str;
+    if (!s || !*s) return 0;
+
+    char *ret = s;
+    int quot = 0;
+    char *c;
+    for (c = s; *c; ++c)
+    {
+	if (*c == '[' && ++quot) continue;
+	if (*c == ']' && quot && --quot) continue;
+	if (!quot && *c == sep)
+	{
+	    *c++ = 0;
+	    break;
+	}
+    }
+    s = c;
+    return ret;
+}
+
+static char *tunhosttok(char *str)
+{
+    char *ret = tuntok(str, ':');
+    if (!ret) return 0;
+    if (*ret != '[') return ret;
+    ++ret;
+    ret[strcspn(ret, "]")] = 0;
+    return ret;
+}
+
+static int tunkv(char *opt, char **k, char **v)
+{
+    size_t eqpos = strcspn(opt, "=");
+    if (!opt[eqpos]) return -1;
+    *k = opt;
+    opt[eqpos] = 0;
+    *v = opt+eqpos+1;
+    return 0;
+}
+
 static TunnelConfig *parseTunnel(char *arg)
 {
-    char *bindhost = strtok(arg, ":");
+    char *bindhost = tunhosttok(arg);
     if (!bindhost) return 0;
-    char *bindportstr = strtok(0, ":");
+    char *bindportstr = tuntok(0, ':');
     if (!bindportstr) return 0;
-    char *remotehost = strtok(0, ":");
+    char *remotehost = tunhosttok(0);
     if (!remotehost) return 0;
-    char *remoteportstr = 0;
-    char *certfile = 0;
-    char *keyfile = 0;
-    if ((remoteportstr = strtok(0, ":"))
-	    && (certfile = strtok(0, ":"))
-	    && !(keyfile = strtok(0, ":"))) return 0;
-
     int bindport;
     if (intArg(&bindport, bindportstr, 1, 65535, 10, 0) < 0) return 0;
-    int remoteport;
-    if (!remoteportstr) remoteport = bindport;
-    else if (intArg(&remoteport, remoteportstr, 1, 65535, 10, 0) < 0) return 0;
+    int remoteport = bindport;
+
+    char *certfile = 0;
+    char *keyfile = 0;
+    int blacklisthits = 0;
+    Proto serverproto = P_ANY;
+    Proto clientproto = P_ANY;
+
+    char *k;
+    char *v;
+    char *opt = tuntok(0, ':');
+    if (opt)
+    {
+	if (tunkv(opt, &k, &v) < 0)
+	{
+	    if (intArg(&remoteport, opt, 1, 65535, 10, 0) < 0) return 0;
+	    if ((opt = tuntok(0, ':')))
+	    {
+		if (tunkv(opt, &k, &v) < 0) return 0;
+	    }
+	    else goto optdone;
+	}
+
+	for (;;)
+	{
+	    if (!strcmp(k, "b"))
+	    {
+		if (intArg(&blacklisthits, v, 0, INT_MAX, 10, 0) < 0) return 0;
+	    }
+	    else if (!strcmp(k, "c")) certfile = v;
+	    else if (!strcmp(k, "k")) keyfile = v;
+	    else if (*k == 'p')
+	    {
+		Proto p = P_ANY;
+		if (!strcmp(v, "4")) p = P_IPv4;
+		else if (!strcmp(v, "6")) p = P_IPv6;
+		else return 0;
+		if (!k[1])
+		{
+		    serverproto = p;
+		    clientproto = p;
+		}
+		else if (!strcmp(k, "pc")) clientproto = p;
+		else if (!strcmp(k, "ps")) serverproto = p;
+		else return 0;
+	    }
+	    else return 0;
+	    if (!(opt = tuntok(0, ':'))) break;
+	    if (tunkv(opt, &k, &v) < 0) return 0;
+	}
+optdone: ;
+    }
 
     TunnelConfig *tun = xmalloc(sizeof *tun);
     tun->next = 0;
@@ -170,6 +279,9 @@ static TunnelConfig *parseTunnel(char *arg)
     tun->keyfile = keyfile;
     tun->bindport = bindport;
     tun->remoteport = remoteport;
+    tun->blacklisthits = blacklisthits;
+    tun->serverproto = serverproto;
+    tun->clientproto = clientproto;
     return tun;
 }
 
@@ -311,6 +423,21 @@ SOLOCAL int TunnelConfig_bindport(const TunnelConfig *self)
 SOLOCAL int TunnelConfig_remoteport(const TunnelConfig *self)
 {
     return self->remoteport;
+}
+
+SOLOCAL int TunnelConfig_blacklisthits(const TunnelConfig *self)
+{
+    return self->blacklisthits;
+}
+
+SOLOCAL Proto TunnelConfig_serverproto(const TunnelConfig *self)
+{
+    return self->serverproto;
+}
+
+SOLOCAL Proto TunnelConfig_clientproto(const TunnelConfig *self)
+{
+    return self->clientproto;
 }
 
 SOLOCAL const char *Config_pidfile(const Config *self)

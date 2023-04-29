@@ -209,6 +209,8 @@ SOLOCAL Server *Server_createTcp(const ServerOpts *opts)
 	    {
 		continue;
 	    }
+	    if (opts->proto == P_IPv4 && res->ai_family != AF_INET) continue;
+	    if (opts->proto == P_IPv6 && res->ai_family != AF_INET6) continue;
 	    fd[nsocks] = socket(res->ai_family, res->ai_socktype,
 		    res->ai_protocol);
 	    if (fd[nsocks] < 0)

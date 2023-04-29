@@ -192,10 +192,11 @@ static void newclient(void *receiver, void *sender, void *args)
 	.remotehost = TunnelConfig_remotehost(ctx->tc),
 	.tls_certfile = TunnelConfig_certfile(ctx->tc),
 	.tls_keyfile = TunnelConfig_keyfile(ctx->tc),
-	.proto = CP_ANY,
+	.proto = TunnelConfig_clientproto(ctx->tc),
 	.port = TunnelConfig_remoteport(ctx->tc),
 	.numerichosts = Config_numerichosts(cfg),
-	.tls = 1
+	.tls = 1,
+	.blacklisthits = TunnelConfig_blacklisthits(ctx->tc)
     };
 
     ConnCtx *cctx = xmalloc(sizeof *cctx);
@@ -225,6 +226,7 @@ static void svstartup(void *receiver, void *sender, void *args)
     {
 	ServerOpts so = { 0 };
 	so.bindhost[0] = TunnelConfig_bindhost(tc);
+	so.proto = TunnelConfig_serverproto(tc);
 	so.port = TunnelConfig_bindport(tc);
 	so.numerichosts = Config_numerichosts(cfg);
 	so.connwait = 1;
