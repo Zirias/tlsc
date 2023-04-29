@@ -19,15 +19,15 @@ Usage: tlsc [-fnv] [-b hits] [-g group] [-p pidfile] [-u user]
                 host        hostname or IP address to bind to and listen
                 port        port to listen on
                 remotehost  remote host name to forward to with TLS
-                remoteport  port of remote service, default: same as `port`
+                remoteport  port of remote service, default: same as `port'
                 k=v         key-value pair of additional tunnel options,
                             the following are available:
                   b=hits    a positive number enables blacklisting
-                            specific socket addresses for `hits`
+                            specific socket addresses for `hits'
                             connection attempts after failure to connect
-                  c=cert    `cert` is used as a client certificate file to
+                  c=cert    `cert' is used as a client certificate file to
                             present to the remote
-                  k=key     `key` is the key file for the certificate
+                  k=key     `key' is the key file for the certificate
                   p=[4|6]   only use IPv4 or IPv6
                   pc=[4|6]  only use IPv4 or IPv6 when connecting as client
                   ps=[4|6]  only use IPv4 or IPv6 when listening as server
