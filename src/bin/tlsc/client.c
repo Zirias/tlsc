@@ -37,14 +37,15 @@ typedef struct ResolveJobData
 
 static BlacklistEntry blacklist[BLACKLISTSIZE];
 
-SOLOCAL void Connection_blacklistAddress(socklen_t len, struct sockaddr *addr)
+SOLOCAL void Connection_blacklistAddress(int hits,
+	socklen_t len, struct sockaddr *addr)
 {
     for (size_t i = 0; i < BLACKLISTSIZE; ++i)
     {
 	if (blacklist[i].len) continue;
 	memcpy(&blacklist[i].val, addr, len);
 	blacklist[i].len = len;
-	blacklist[i].hits = BLACKLISTHITS;
+	blacklist[i].hits = hits;
 	return;
     }
 }
@@ -96,7 +97,8 @@ static Connection *createFromAddrinfo(const ClientOpts *opts,
 	.tls_client_certfile = opts->tls_certfile,
 	.tls_client_keyfile = opts->tls_keyfile,
 	.createmode = CCM_CONNECTING,
-	.tls_client = opts->tls
+	.tls_client = opts->tls,
+	.blacklisthits = opts->blacklisthits
     };
     Connection *conn = Connection_create(fd, &copts);
     Connection_setRemoteAddr(conn, res->ai_addr, res->ai_addrlen,

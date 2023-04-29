@@ -14,6 +14,7 @@ typedef struct ConnOpts
     const char *tls_client_keyfile;
     ConnectionCreateMode createmode;
     int tls_client;
+    int blacklisthits;
 } ConnOpts;
 
 #endif

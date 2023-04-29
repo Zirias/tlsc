@@ -72,14 +72,15 @@ typedef struct Connection
     int tls_connect_ticks;
     int tls_read_st;
     int tls_write_st;
+    int blacklisthits;
     uint8_t deleteScheduled;
     uint8_t nrecs;
     uint8_t baserecidx;
     uint8_t rdbuf[CONNBUFSZ];
 } Connection;
 
-void Connection_blacklistAddress(socklen_t len, struct sockaddr *addr)
-    ATTR_NONNULL((2));
+void Connection_blacklistAddress(int hits,
+	socklen_t len, struct sockaddr *addr) ATTR_NONNULL((3));
 
 static void checkPendingConnection(void *receiver, void *sender, void *args);
 static void wantreadwrite(Connection *self) CMETHOD;
@@ -500,6 +501,7 @@ SOLOCAL Connection *Connection_create(int fd, const ConnOpts *opts)
     self->tls_connect_st = 0;
     self->tls_read_st = 0;
     self->tls_write_st = 0;
+    self->blacklisthits = opts->blacklisthits;
     self->args.buf = self->rdbuf;
     self->args.handling = 0;
     self->deleteScheduled = 0;
@@ -669,10 +671,10 @@ SOLOCAL void Connection_close(Connection *self, int blacklist)
     {
 	SSL_shutdown(self->tls);
     }
-    if (blacklist && self->resolveArgs.addrlen)
+    if (blacklist && self->blacklisthits && self->resolveArgs.addrlen)
     {
-	Connection_blacklistAddress(self->resolveArgs.addrlen,
-		&self->resolveArgs.sa);
+	Connection_blacklistAddress(self->blacklisthits,
+		self->resolveArgs.addrlen, &self->resolveArgs.sa);
     }
     Event_raise(self->closed, 0, self->connecting ? 0 : self);
     deleteLater(self);

@@ -17,6 +17,7 @@ typedef struct ClientOpts
     int port;
     int numerichosts;
     int tls;
+    int blacklisthits;
 } ClientOpts;
 
 #endif
