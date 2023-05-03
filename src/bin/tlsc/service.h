@@ -18,6 +18,7 @@ typedef void (*PanicHandler)(const char *msg) ATTR_NONNULL((1));
 int Service_init(const DaemonOpts *options) ATTR_NONNULL((1));
 Event *Service_readyRead(void) ATTR_RETNONNULL ATTR_PURE;
 Event *Service_readyWrite(void) ATTR_RETNONNULL ATTR_PURE;
+Event *Service_prestartup(void) ATTR_RETNONNULL ATTR_PURE;
 Event *Service_startup(void) ATTR_RETNONNULL ATTR_PURE;
 Event *Service_shutdown(void) ATTR_RETNONNULL ATTR_PURE;
 Event *Service_tick(void) ATTR_RETNONNULL ATTR_PURE;

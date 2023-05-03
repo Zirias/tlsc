@@ -18,6 +18,7 @@
 static const DaemonOpts *opts;
 static Event *readyRead;
 static Event *readyWrite;
+static Event *prestartup;
 static Event *startup;
 static Event *shutdown;
 static Event *tick;
@@ -78,6 +79,7 @@ SOLOCAL int Service_init(const DaemonOpts *options)
     opts = options;
     readyRead = Event_create(0);
     readyWrite = Event_create(0);
+    prestartup = Event_create(0);
     startup = Event_create(0);
     shutdown = Event_create(0);
     tick = Event_create(0);
@@ -107,6 +109,11 @@ SOLOCAL Event *Service_readyRead(void)
 SOLOCAL Event *Service_readyWrite(void)
 {
     return readyWrite;
+}
+
+SOLOCAL Event *Service_prestartup(void)
+{
+    return prestartup;
 }
 
 SOLOCAL Event *Service_startup(void)
@@ -198,6 +205,12 @@ SOLOCAL int Service_run(void)
     if (!opts) return -1;
 
     int rc = EXIT_FAILURE;
+
+    StartupEventArgs sea = { EXIT_SUCCESS };
+    Event_raise(prestartup, 0, &sea);
+    rc = sea.rc;
+    if (rc != EXIT_SUCCESS) goto done;
+
     if (opts->uid != -1 && geteuid() == 0)
     {
 	if (opts->daemonize)
@@ -259,7 +272,6 @@ SOLOCAL int Service_run(void)
 	goto done;
     }
 
-    StartupEventArgs sea = { EXIT_SUCCESS };
     Event_raise(startup, 0, &sea);
     rc = sea.rc;
     if (rc != EXIT_SUCCESS) goto done;
@@ -386,11 +398,13 @@ SOLOCAL void Service_done(void)
     Event_destroy(tick);
     Event_destroy(shutdown);
     Event_destroy(startup);
+    Event_destroy(prestartup);
     Event_destroy(readyWrite);
     Event_destroy(readyRead);
     opts = 0;
     shutdown = 0;
     startup = 0;
+    prestartup = 0;
     readyWrite = 0;
     readyRead = 0;
 }
