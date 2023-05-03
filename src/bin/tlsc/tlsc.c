@@ -214,7 +214,7 @@ static void newclient(void *receiver, void *sender, void *args)
     }
 }
 
-static void svstartup(void *receiver, void *sender, void *args)
+static void svprestartup(void *receiver, void *sender, void *args)
 {
     (void)receiver;
     (void)sender;
@@ -247,13 +247,17 @@ static void svstartup(void *receiver, void *sender, void *args)
 		newclient, 0);
 	tc = TunnelConfig_next(tc);
     }
+}
 
-    if (Config_daemonize(cfg))
-    {
-	Log_setAsync(1);
-	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
-	daemon_launched();
-    }
+static void svstartup(void *receiver, void *sender, void *args)
+{
+    (void)receiver;
+    (void)sender;
+    (void)args;
+
+    Log_setAsync(1);
+    Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
+    daemon_launched();
 }
 
 static void svshutdown(void *receiver, void *sender, void *args)
@@ -281,7 +285,11 @@ static int daemonrun(void *data)
     if (Service_init(&daemonOpts) >= 0)
     {
 	Service_setTickInterval(1000);
-	Event_register(Service_startup(), 0, svstartup, 0);
+	Event_register(Service_prestartup(), 0, svprestartup, 0);
+	if (Config_daemonize(cfg))
+	{
+	    Event_register(Service_startup(), 0, svstartup, 0);
+	}
 	Event_register(Service_shutdown(), 0, svshutdown, 0);
 	if (ThreadPool_init(&threadOpts) >= 0)
 	{
