@@ -311,12 +311,12 @@ SOLOCAL int Tlsc_run(const Config *config)
 	Log_setMaxLogLevel(L_DEBUG);
     }
 
+    daemonOpts.uid = Config_uid(cfg);
+    daemonOpts.gid = Config_gid(cfg);
     if (Config_daemonize(cfg))
     {
 	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
 	daemonOpts.pidfile = Config_pidfile(cfg);
-	daemonOpts.uid = Config_uid(cfg);
-	daemonOpts.gid = Config_gid(cfg);
 	daemonOpts.daemonize = 1;
 	return daemon_run(daemonrun, 0, daemonOpts.pidfile, 1);
     }
