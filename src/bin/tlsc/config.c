@@ -300,6 +300,8 @@ SOLOCAL Config *Config_fromOpts(int argc, char **argv)
     memset(config, 0, sizeof *config);
     config->pidfile = pidfile;
     config->daemonize = 1;
+    config->uid = -1;
+    config->gid = -1;
 
     const char *prgname = "tlsc";
     if (argc > 0) prgname = argv[0];
