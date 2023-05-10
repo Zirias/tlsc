@@ -326,44 +326,51 @@ static void doread(Connection *self)
 	    Connection_remoteAddr(self));
     if (self->tls)
     {
-	size_t readsz = 0;
-	int ret = SSL_read_ex(self->tls, self->rdbuf, CONNBUFSZ, &readsz);
-	if (ret > 0)
+	int checkagain;
+	do
 	{
-	    self->tls_read_st = 0;
-	    self->args.size = readsz;
-	    Event_raise(self->dataReceived, 0, &self->args);
-	    if (self->args.handling)
+	    checkagain = 0;
+	    size_t readsz = 0;
+	    int ret = SSL_read_ex(self->tls, self->rdbuf, CONNBUFSZ, &readsz);
+	    if (ret > 0)
 	    {
-		Log_fmt(L_DEBUG, "connection: blocking reads from %s",
-			Connection_remoteAddr(self));
-	    }
-	    else
-	    {
-		Log_fmt(L_DEBUG, "connection: done reading from %s",
-			Connection_remoteAddr(self));
-	    }
-	}
-	else
-	{
-	    int rc = SSL_get_error(self->tls, ret);
-	    if (rc == SSL_ERROR_WANT_READ || rc == SSL_ERROR_WANT_WRITE)
-	    {
-		self->tls_read_st = rc;
-		Log_fmt(L_DEBUG, "connection: reading from %s incomplete: %d",
-			Connection_remoteAddr(self), rc);
-	    }
-	    else
-	    {
-		if (ret < 0)
+		self->tls_read_st = 0;
+		self->args.size = readsz;
+		Event_raise(self->dataReceived, 0, &self->args);
+		if (self->args.handling)
 		{
-		    Log_fmt(L_WARNING, "connection: error reading from %s",
+		    Log_fmt(L_DEBUG, "connection: blocking reads from %s",
 			    Connection_remoteAddr(self));
 		}
-		Connection_close(self, 0);
-		return;
+		else
+		{
+		    if (readsz == CONNBUFSZ) checkagain = 1;
+		    Log_fmt(L_DEBUG, "connection: done reading from %s",
+			    Connection_remoteAddr(self));
+		}
 	    }
-	}
+	    else
+	    {
+		int rc = SSL_get_error(self->tls, ret);
+		if (rc == SSL_ERROR_WANT_READ || rc == SSL_ERROR_WANT_WRITE)
+		{
+		    self->tls_read_st = rc;
+		    Log_fmt(L_DEBUG,
+			    "connection: reading from %s incomplete: %d",
+			    Connection_remoteAddr(self), rc);
+		}
+		else
+		{
+		    if (ret < 0)
+		    {
+			Log_fmt(L_WARNING, "connection: error reading from %s",
+				Connection_remoteAddr(self));
+		    }
+		    Connection_close(self, 0);
+		    return;
+		}
+	    }
+	} while (checkagain);
 	wantreadwrite(self);
     }
     else
@@ -383,7 +390,7 @@ static void doread(Connection *self)
 	}
 	else if (errno == EWOULDBLOCK || errno == EAGAIN)
 	{
-	    Log_fmt(L_INFO, "connection: ignoring spurious read from %s",
+	    Log_fmt(L_DEBUG, "connection: ignoring spurious read from %s",
 		    Connection_remoteAddr(self));
 	}
 	else
@@ -662,6 +669,7 @@ SOLOCAL int Connection_confirmDataReceived(Connection *self)
     if (!self->args.handling) return -1;
     self->args.handling = 0;
     Connection_activate(self);
+    if (self->tls && self->args.size == CONNBUFSZ) doread(self);
     return 0;
 }
 
