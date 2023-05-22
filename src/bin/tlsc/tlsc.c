@@ -1,18 +1,6 @@
-#include "client.h"
-#include "clientopts.h"
 #include "config.h"
-#include "connection.h"
-#include "event.h"
-#include "daemon.h"
-#include "daemonopts.h"
-#include "log.h"
-#include "server.h"
-#include "serveropts.h"
-#include "service.h"
-#include "threadopts.h"
-#include "threadpool.h"
-#include "tlsc.h"
-#include "util.h"
+
+#include <poser/core.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,36 +14,18 @@
 
 typedef struct ServCtx
 {
-    Server *server;
+    PSC_Server *server;
     const TunnelConfig *tc;
 } ServCtx;
 
 typedef struct ConnCtx
 {
-    Connection *client;
-    Connection *service;
+    PSC_Connection *client;
+    PSC_Connection *service;
     const char *chost;
     const char *shost;
     int connected;
 } ConnCtx;
-
-static DaemonOpts daemonOpts = {
-    .pidfile = 0,
-    .uid = -1,
-    .gid = -1,
-    .daemonize = 0
-};
-
-static ThreadOpts threadOpts = {
-    .nThreads = 0,
-    .maxThreads = 16,
-    .nPerCpu = 1,
-    .defNThreads = 4,
-    .queueLen = 0,
-    .maxQueueLen = 32,
-    .minQueueLen = 16,
-    .qLenPerThread = 2
-};
 
 static const Config *cfg;
 static ServCtx *servers = 0;
@@ -66,10 +36,10 @@ static void datareceived(void *receiver, void *sender, void *args)
 {
     (void)sender;
 
-    Connection *c = receiver;
-    DataReceivedEventArgs *ea = args;
-    ea->handling = 1;
-    Connection_write(c, ea->buf, ea->size, ea);
+    PSC_Connection *c = receiver;
+    PSC_EADataReceived_markHandling(args);
+    PSC_Connection_write(c, PSC_EADataReceived_buf(args),
+	    PSC_EADataReceived_size(args), args);
 }
 
 static void datasent(void *receiver, void *sender, void *args)
@@ -77,17 +47,16 @@ static void datasent(void *receiver, void *sender, void *args)
     (void)sender;
     (void)args;
 
-    Connection *c = receiver;
-    Connection_confirmDataReceived(c);
+    PSC_Connection_confirmDataReceived(receiver);
 }
 
 static void logconnected(ConnCtx *ctx)
 {
     if (ctx->chost && ctx->shost && ctx->connected)
     {
-	Log_fmt(L_INFO, "Tlsc: connected %s:%d -> %s:%d",
-		ctx->chost, Connection_remotePort(ctx->client),
-		ctx->shost, Connection_remotePort(ctx->service));
+	PSC_Log_fmt(PSC_L_INFO, "Tlsc: connected %s:%d -> %s:%d",
+		ctx->chost, PSC_Connection_remotePort(ctx->client),
+		ctx->shost, PSC_Connection_remotePort(ctx->service));
     }
 }
 
@@ -96,10 +65,10 @@ static void nameresolved(void *receiver, void *sender, void *args)
     (void)args;
 
     ConnCtx *ctx = receiver;
-    Connection *c = sender;
+    PSC_Connection *c = sender;
 
-    if (c == ctx->service) ctx->shost = Connection_remoteHost(c);
-    else ctx->chost = Connection_remoteHost(c);
+    if (c == ctx->service) ctx->shost = PSC_Connection_remoteHost(c);
+    else ctx->chost = PSC_Connection_remoteHost(c);
 
     logconnected(ctx);
 }
@@ -109,63 +78,65 @@ static void connected(void *receiver, void *sender, void *args)
     (void)args;
 
     ConnCtx *ctx = receiver;
-    Connection *sv = sender;
-    Connection *cl = ctx->client;
+    PSC_Connection *sv = sender;
+    PSC_Connection *cl = ctx->client;
 
-    Event_register(Connection_dataReceived(cl), sv, datareceived, 0);
-    Event_register(Connection_dataReceived(sv), cl, datareceived, 0);
-    Event_register(Connection_dataSent(cl), sv, datasent, 0);
-    Event_register(Connection_dataSent(sv), cl, datasent, 0);
+    PSC_Event_register(PSC_Connection_dataReceived(cl), sv, datareceived, 0);
+    PSC_Event_register(PSC_Connection_dataReceived(sv), cl, datareceived, 0);
+    PSC_Event_register(PSC_Connection_dataSent(cl), sv, datasent, 0);
+    PSC_Event_register(PSC_Connection_dataSent(sv), cl, datasent, 0);
 
     ctx->connected = 1;
     if (Config_numerichosts(cfg))
     {
-	ctx->chost = Connection_remoteAddr(cl);
-	ctx->shost = Connection_remoteAddr(sv);
+	ctx->chost = PSC_Connection_remoteAddr(cl);
+	ctx->shost = PSC_Connection_remoteAddr(sv);
     }
     logconnected(ctx);
 
-    Connection_activate(cl);
+    PSC_Connection_activate(cl);
 }
 
 static void connclosed(void *receiver, void *sender, void *args)
 {
     ConnCtx *ctx = receiver;
-    Connection *c = sender;
-    Connection *o = (c == ctx->client) ? ctx->service : ctx->client;
+    PSC_Connection *c = sender;
+    PSC_Connection *o = (c == ctx->client) ? ctx->service : ctx->client;
 
-    Event_unregister(Connection_closed(o), ctx, connclosed, 0);
-    Event_unregister(Connection_closed(c), ctx, connclosed, 0);
+    PSC_Event_unregister(PSC_Connection_closed(o), ctx, connclosed, 0);
+    PSC_Event_unregister(PSC_Connection_closed(c), ctx, connclosed, 0);
     if (args)
     {
-	Event_unregister(Connection_dataReceived(c), o, datareceived, 0);
-	Event_unregister(Connection_dataReceived(o), c, datareceived, 0);
-	Event_unregister(Connection_dataSent(c), o, datasent, 0);
-	Event_unregister(Connection_dataSent(o), c, datasent, 0);
-	const char *chost = Connection_remoteHost(c);
-	if (!chost) chost = Connection_remoteAddr(c);
-	const char *ohost = Connection_remoteHost(o);
-	if (!ohost) ohost = Connection_remoteAddr(o);
-	Log_fmt(L_INFO, "Tlsc: connection %s:%d <-> %s:%d closed",
-		chost, Connection_remotePort(c),
-		ohost, Connection_remotePort(o));
+	PSC_Event_unregister(PSC_Connection_dataReceived(c), o,
+		datareceived, 0);
+	PSC_Event_unregister(PSC_Connection_dataReceived(o), c,
+		datareceived, 0);
+	PSC_Event_unregister(PSC_Connection_dataSent(c), o, datasent, 0);
+	PSC_Event_unregister(PSC_Connection_dataSent(o), c, datasent, 0);
+	const char *chost = PSC_Connection_remoteHost(c);
+	if (!chost) chost = PSC_Connection_remoteAddr(c);
+	const char *ohost = PSC_Connection_remoteHost(o);
+	if (!ohost) ohost = PSC_Connection_remoteAddr(o);
+	PSC_Log_fmt(PSC_L_INFO, "Tlsc: connection %s:%d <-> %s:%d closed",
+		chost, PSC_Connection_remotePort(c),
+		ohost, PSC_Connection_remotePort(o));
     }
     else
     {
-	Event_unregister(Connection_connected(c), ctx, connected, 0);
+	PSC_Event_unregister(PSC_Connection_connected(c), ctx, connected, 0);
     }
 
-    Connection_close(o, 0);
+    PSC_Connection_close(o, 0);
     free(ctx);
 }
 
-static void svConnCreated(void *receiver, Connection *sv)
+static void svConnCreated(void *receiver, PSC_Connection *sv)
 {
     ConnCtx *ctx = receiver;
 
     if (!sv)
     {
-	Connection_close(ctx->client, 0);
+	PSC_Connection_close(ctx->client, 0);
 	free(ctx);
 	return;
     }
@@ -174,11 +145,12 @@ static void svConnCreated(void *receiver, Connection *sv)
 
     if (!Config_numerichosts(cfg))
     {
-	Event_register(Connection_nameResolved(sv), ctx, nameresolved, 0);
+	PSC_Event_register(PSC_Connection_nameResolved(sv), ctx,
+		nameresolved, 0);
     }
-    Event_register(Connection_closed(ctx->client), ctx, connclosed, 0);
-    Event_register(Connection_closed(sv), ctx, connclosed, 0);
-    Event_register(Connection_connected(sv), ctx, connected, 0);
+    PSC_Event_register(PSC_Connection_closed(ctx->client), ctx, connclosed, 0);
+    PSC_Event_register(PSC_Connection_closed(sv), ctx, connclosed, 0);
+    PSC_Event_register(PSC_Connection_connected(sv), ctx, connected, 0);
 }
 
 static void newclient(void *receiver, void *sender, void *args)
@@ -186,31 +158,31 @@ static void newclient(void *receiver, void *sender, void *args)
     (void)sender;
 
     ServCtx *ctx = receiver;
-    Connection *cl = args;
+    PSC_Connection *cl = args;
 
-    ClientOpts co = {
-	.remotehost = TunnelConfig_remotehost(ctx->tc),
-	.tls_certfile = TunnelConfig_certfile(ctx->tc),
-	.tls_keyfile = TunnelConfig_keyfile(ctx->tc),
-	.proto = TunnelConfig_clientproto(ctx->tc),
-	.port = TunnelConfig_remoteport(ctx->tc),
-	.numerichosts = Config_numerichosts(cfg),
-	.tls = 1,
-	.blacklisthits = TunnelConfig_blacklisthits(ctx->tc)
-    };
-
-    ConnCtx *cctx = xmalloc(sizeof *cctx);
+    ConnCtx *cctx = PSC_malloc(sizeof *cctx);
     memset(cctx, 0, sizeof *cctx);
     cctx->client = cl;
 
-    if (Connection_createTcpClientAsync(&co, cctx, svConnCreated) < 0)
+    PSC_TcpClientOpts_init(
+	    TunnelConfig_remotehost(ctx->tc),
+	    TunnelConfig_remoteport(ctx->tc));
+    PSC_TcpClientOpts_enableTls(
+	    TunnelConfig_certfile(ctx->tc),
+	    TunnelConfig_keyfile(ctx->tc));
+    PSC_TcpClientOpts_setProto(TunnelConfig_clientproto(ctx->tc));
+    PSC_TcpClientOpts_setBlacklistHits(TunnelConfig_blacklisthits(ctx->tc));
+    if (Config_numerichosts(cfg)) PSC_TcpClientOpts_numericHosts();
+
+    if (PSC_Connection_createTcpClientAsync(cctx, svConnCreated) < 0)
     {
-	Connection_close(cl, 0);
+	PSC_Connection_close(cl, 0);
 	free(cctx);
     }
     if (!Config_numerichosts(cfg))
     {
-	Event_register(Connection_nameResolved(cl), cctx, nameresolved, 0);
+	PSC_Event_register(PSC_Connection_nameResolved(cl), cctx,
+		nameresolved, 0);
     }
 }
 
@@ -219,32 +191,29 @@ static void svprestartup(void *receiver, void *sender, void *args)
     (void)receiver;
     (void)sender;
 
-    StartupEventArgs *ea = args;
-
     const TunnelConfig *tc = Config_tunnel(cfg);
     while (tc)
     {
-	ServerOpts so = { 0 };
-	so.bindhost[0] = TunnelConfig_bindhost(tc);
-	so.proto = TunnelConfig_serverproto(tc);
-	so.port = TunnelConfig_bindport(tc);
-	so.numerichosts = Config_numerichosts(cfg);
-	so.connwait = 1;
-	Server *server = Server_createTcp(&so);
+	PSC_TcpServerOpts_init(TunnelConfig_bindport(tc));
+	PSC_TcpServerOpts_bind(TunnelConfig_bindhost(tc));
+	PSC_TcpServerOpts_setProto(TunnelConfig_serverproto(tc));
+	PSC_TcpServerOpts_connWait();
+	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts();
+	PSC_Server *server = PSC_Server_createTcp();
 	if (!server)
 	{
-	    ea->rc = EXIT_FAILURE;
+	    PSC_EAStartup_return(args, EXIT_FAILURE);
 	    return;
 	}
 	if (servcapa == servsize)
 	{
 	    servcapa += SERVCHUNK;
-	    servers = xrealloc(servers, servcapa * sizeof *servers);
+	    servers = PSC_realloc(servers, servcapa * sizeof *servers);
 	}
 	servers[servsize].server = server;
 	servers[servsize].tc = tc;
-	Event_register(Server_clientConnected(server), &servers[servsize++],
-		newclient, 0);
+	PSC_Event_register(PSC_Server_clientConnected(server),
+		&servers[servsize++], newclient, 0);
 	tc = TunnelConfig_next(tc);
     }
 }
@@ -255,9 +224,9 @@ static void svstartup(void *receiver, void *sender, void *args)
     (void)sender;
     (void)args;
 
-    Log_setAsync(1);
-    Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
-    daemon_launched();
+    PSC_Log_setAsync(1);
+    PSC_Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
+    PSC_Daemon_launched();
 }
 
 static void svshutdown(void *receiver, void *sender, void *args)
@@ -268,7 +237,7 @@ static void svshutdown(void *receiver, void *sender, void *args)
 
     for (size_t i = 0; i < servsize; ++i)
     {
-	Server_destroy(servers[i].server);
+	PSC_Server_destroy(servers[i].server);
     }
     free(servers);
     servers = 0;
@@ -282,21 +251,24 @@ static int daemonrun(void *data)
 
     int rc = EXIT_FAILURE;
 
-    if (Service_init(&daemonOpts) >= 0)
+    if (PSC_Service_init() >= 0)
     {
-	Service_setTickInterval(1000);
-	Event_register(Service_prestartup(), 0, svprestartup, 0);
+	PSC_Service_setTickInterval(1000);
+	PSC_Event_register(PSC_Service_prestartup(), 0, svprestartup, 0);
 	if (Config_daemonize(cfg))
 	{
-	    Event_register(Service_startup(), 0, svstartup, 0);
+	    PSC_Event_register(PSC_Service_startup(), 0, svstartup, 0);
 	}
-	Event_register(Service_shutdown(), 0, svshutdown, 0);
-	if (ThreadPool_init(&threadOpts) >= 0)
+	PSC_Event_register(PSC_Service_shutdown(), 0, svshutdown, 0);
+
+	PSC_ThreadOpts_init(8);
+	PSC_ThreadOpts_maxThreads(16);
+	if (PSC_ThreadPool_init() >= 0)
 	{
-	    rc = Service_run();
-	    ThreadPool_done();
+	    rc = PSC_Service_run();
+	    PSC_ThreadPool_done();
 	}
-	Service_done();
+	PSC_Service_done();
     }
 
     return rc;
@@ -306,24 +278,23 @@ SOLOCAL int Tlsc_run(const Config *config)
 {
     cfg = config;
 
+    PSC_RunOpts_init(daemonrun, 0, Config_pidfile(cfg));
+    PSC_RunOpts_runas(Config_uid(cfg), Config_gid(cfg));
+
     if (Config_verbose(cfg))
     {
-	Log_setMaxLogLevel(L_DEBUG);
+	PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
     }
-
-    daemonOpts.uid = Config_uid(cfg);
-    daemonOpts.gid = Config_gid(cfg);
     if (Config_daemonize(cfg))
     {
-	Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
-	daemonOpts.pidfile = Config_pidfile(cfg);
-	daemonOpts.daemonize = 1;
-	return daemon_run(daemonrun, 0, daemonOpts.pidfile, 1);
+	PSC_Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
     }
     else
     {
-	Log_setFileLogger(stderr);
-	return daemonrun(0);
+	PSC_RunOpts_foreground();
+	PSC_Log_setFileLogger(stderr);
     }
+
+    return PSC_Daemon_run();
 }
 

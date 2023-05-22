@@ -1,6 +1,6 @@
 #include "config.h"
-#include "log.h"
-#include "util.h"
+
+#include <poser/core.h>
 
 #include <errno.h>
 #include <grp.h>
@@ -40,8 +40,8 @@ struct TunnelConfig
     int bindport;
     int remoteport;
     int blacklisthits;
-    Proto serverproto;
-    Proto clientproto;
+    PSC_Proto serverproto;
+    PSC_Proto clientproto;
 };
 
 static int addArg(char *args, int *idx, char opt)
@@ -223,8 +223,8 @@ static TunnelConfig *parseTunnel(char *arg)
     char *certfile = 0;
     char *keyfile = 0;
     int blacklisthits = 0;
-    Proto serverproto = P_ANY;
-    Proto clientproto = P_ANY;
+    PSC_Proto serverproto = PSC_P_ANY;
+    PSC_Proto clientproto = PSC_P_ANY;
 
     char *k;
     char *v;
@@ -251,9 +251,9 @@ static TunnelConfig *parseTunnel(char *arg)
 	    else if (!strcmp(k, "k")) keyfile = v;
 	    else if (*k == 'p')
 	    {
-		Proto p = P_ANY;
-		if (!strcmp(v, "4")) p = P_IPv4;
-		else if (!strcmp(v, "6")) p = P_IPv6;
+		PSC_Proto p = PSC_P_ANY;
+		if (!strcmp(v, "4")) p = PSC_P_IPv4;
+		else if (!strcmp(v, "6")) p = PSC_P_IPv6;
 		else return 0;
 		if (!k[1])
 		{
@@ -271,7 +271,7 @@ static TunnelConfig *parseTunnel(char *arg)
 optdone: ;
     }
 
-    TunnelConfig *tun = xmalloc(sizeof *tun);
+    TunnelConfig *tun = PSC_malloc(sizeof *tun);
     tun->next = 0;
     tun->bindhost = bindhost;
     tun->remotehost = remotehost;
@@ -296,7 +296,7 @@ SOLOCAL Config *Config_fromOpts(int argc, char **argv)
     const char onceflags[] = "fgnpuv";
     char seen[sizeof onceflags - 1] = {0};
 
-    Config *config = xmalloc(sizeof *config);
+    Config *config = PSC_malloc(sizeof *config);
     memset(config, 0, sizeof *config);
     config->pidfile = pidfile;
     config->daemonize = 1;
@@ -432,12 +432,12 @@ SOLOCAL int TunnelConfig_blacklisthits(const TunnelConfig *self)
     return self->blacklisthits;
 }
 
-SOLOCAL Proto TunnelConfig_serverproto(const TunnelConfig *self)
+SOLOCAL PSC_Proto TunnelConfig_serverproto(const TunnelConfig *self)
 {
     return self->serverproto;
 }
 
-SOLOCAL Proto TunnelConfig_clientproto(const TunnelConfig *self)
+SOLOCAL PSC_Proto TunnelConfig_clientproto(const TunnelConfig *self)
 {
     return self->clientproto;
 }

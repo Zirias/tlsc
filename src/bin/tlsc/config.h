@@ -1,8 +1,8 @@
 #ifndef TLSC_CONFIG_H
 #define TLSC_CONFIG_H
 
-#include "decl.h"
-#include "proto.h"
+#include <poser/decl.h>
+#include <poser/core/proto.h>
 
 C_CLASS_DECL(Config);
 C_CLASS_DECL(TunnelConfig);
@@ -18,8 +18,8 @@ const char *TunnelConfig_keyfile(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_bindport(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_remoteport(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_blacklisthits(const TunnelConfig *self) CMETHOD ATTR_PURE;
-Proto TunnelConfig_serverproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
-Proto TunnelConfig_clientproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
+PSC_Proto TunnelConfig_serverproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
+PSC_Proto TunnelConfig_clientproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
 const char *Config_pidfile(const Config *self) CMETHOD ATTR_PURE;
 long Config_uid(const Config *self) CMETHOD ATTR_PURE;
 long Config_gid(const Config *self) CMETHOD ATTR_PURE;
