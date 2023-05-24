@@ -4,7 +4,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 
 #ifndef LOGIDENT
 #define LOGIDENT "tlsc"
@@ -226,17 +225,6 @@ static void svprestartup(void *receiver, void *sender, void *args)
     }
 }
 
-static void svstartup(void *receiver, void *sender, void *args)
-{
-    (void)receiver;
-    (void)sender;
-    (void)args;
-
-    PSC_Log_setAsync(1);
-    PSC_Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 0);
-    PSC_Daemon_launched();
-}
-
 static void svshutdown(void *receiver, void *sender, void *args)
 {
     (void)receiver;
@@ -259,25 +247,12 @@ SOLOCAL int Tlsc_run(const Config *config)
 
     PSC_RunOpts_init(Config_pidfile(cfg));
     PSC_RunOpts_runas(Config_uid(cfg), Config_gid(cfg));
+    PSC_RunOpts_enableDefaultLogging(LOGIDENT);
+    if (!Config_daemonize(cfg)) PSC_RunOpts_foreground();
+    if (Config_verbose(cfg)) PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
 
     PSC_ThreadOpts_init(8);
     PSC_ThreadOpts_maxThreads(16);
-
-    if (Config_verbose(cfg))
-    {
-	PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
-    }
-
-    if (Config_daemonize(cfg))
-    {
-	PSC_Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
-	PSC_Event_register(PSC_Service_startup(), 0, svstartup, 0);
-    }
-    else
-    {
-	PSC_RunOpts_foreground();
-	PSC_Log_setFileLogger(stderr);
-    }
 
     PSC_Event_register(PSC_Service_prestartup(), 0, svprestartup, 0);
     PSC_Event_register(PSC_Service_shutdown(), 0, svshutdown, 0);
