@@ -40,6 +40,7 @@ struct TunnelConfig
     int bindport;
     int remoteport;
     int blacklisthits;
+    int noverify;
     PSC_Proto serverproto;
     PSC_Proto clientproto;
 };
@@ -78,6 +79,8 @@ static void usage(const char *prgname)
 	    "\t\t  p=[4|6]   only use IPv4 or IPv6\n"
 	    "\t\t  pc=[4|6]  only use IPv4 or IPv6 when connecting as client\n"
 	    "\t\t  ps=[4|6]  only use IPv4 or IPv6 when listening as server\n"
+	    "\t\t  v=[0|1]   disable (0) or enable (1) server certificate\n"
+	    "\t\t            verification (default: enabled)\n"
 	    "\n"
 	    "\t               Example:\n"
 	    "\n"
@@ -223,6 +226,7 @@ static TunnelConfig *parseTunnel(char *arg)
     char *certfile = 0;
     char *keyfile = 0;
     int blacklisthits = 0;
+    int noverify = 0;
     PSC_Proto serverproto = PSC_P_ANY;
     PSC_Proto clientproto = PSC_P_ANY;
 
@@ -264,6 +268,12 @@ static TunnelConfig *parseTunnel(char *arg)
 		else if (!strcmp(k, "ps")) serverproto = p;
 		else return 0;
 	    }
+	    else if (!strcmp(k, "v"))
+	    {
+		if (!strcmp(v, "0")) noverify = 1;
+		else if (!strcmp(v, "1")) noverify = 0;
+		else return 0;
+	    }
 	    else return 0;
 	    if (!(opt = tuntok(0, ':'))) break;
 	    if (tunkv(opt, &k, &v) < 0) return 0;
@@ -280,6 +290,7 @@ optdone: ;
     tun->bindport = bindport;
     tun->remoteport = remoteport;
     tun->blacklisthits = blacklisthits;
+    tun->noverify = noverify;
     tun->serverproto = serverproto;
     tun->clientproto = clientproto;
     return tun;
@@ -430,6 +441,11 @@ SOLOCAL int TunnelConfig_remoteport(const TunnelConfig *self)
 SOLOCAL int TunnelConfig_blacklisthits(const TunnelConfig *self)
 {
     return self->blacklisthits;
+}
+
+SOLOCAL int TunnelConfig_noverify(const TunnelConfig *self)
+{
+    return self->noverify;
 }
 
 SOLOCAL PSC_Proto TunnelConfig_serverproto(const TunnelConfig *self)

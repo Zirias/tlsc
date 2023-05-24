@@ -164,21 +164,27 @@ static void newclient(void *receiver, void *sender, void *args)
     memset(cctx, 0, sizeof *cctx);
     cctx->client = cl;
 
-    PSC_TcpClientOpts_init(
+    PSC_TcpClientOpts *opts = PSC_TcpClientOpts_create(
 	    TunnelConfig_remotehost(ctx->tc),
 	    TunnelConfig_remoteport(ctx->tc));
-    PSC_TcpClientOpts_enableTls(
+    PSC_TcpClientOpts_enableTls(opts, 
 	    TunnelConfig_certfile(ctx->tc),
 	    TunnelConfig_keyfile(ctx->tc));
-    PSC_TcpClientOpts_setProto(TunnelConfig_clientproto(ctx->tc));
-    PSC_TcpClientOpts_setBlacklistHits(TunnelConfig_blacklisthits(ctx->tc));
-    if (Config_numerichosts(cfg)) PSC_TcpClientOpts_numericHosts();
+    PSC_TcpClientOpts_setProto(opts,
+	    TunnelConfig_clientproto(ctx->tc));
+    PSC_TcpClientOpts_setBlacklistHits(opts,
+	    TunnelConfig_blacklisthits(ctx->tc));
+    if (Config_numerichosts(cfg)) PSC_TcpClientOpts_numericHosts(opts);
+    if (TunnelConfig_noverify(ctx->tc))
+	PSC_TcpClientOpts_disableCertVerify(opts);
 
-    if (PSC_Connection_createTcpClientAsync(cctx, svConnCreated) < 0)
+    if (PSC_Connection_createTcpClientAsync(opts, cctx, svConnCreated) < 0)
     {
 	PSC_Connection_close(cl, 0);
 	free(cctx);
     }
+    PSC_TcpClientOpts_destroy(opts);
+
     if (!Config_numerichosts(cfg))
     {
 	PSC_Event_register(PSC_Connection_nameResolved(cl), cctx,
@@ -194,12 +200,14 @@ static void svprestartup(void *receiver, void *sender, void *args)
     const TunnelConfig *tc = Config_tunnel(cfg);
     while (tc)
     {
-	PSC_TcpServerOpts_init(TunnelConfig_bindport(tc));
-	PSC_TcpServerOpts_bind(TunnelConfig_bindhost(tc));
-	PSC_TcpServerOpts_setProto(TunnelConfig_serverproto(tc));
-	PSC_TcpServerOpts_connWait();
-	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts();
-	PSC_Server *server = PSC_Server_createTcp();
+	PSC_TcpServerOpts *opts = PSC_TcpServerOpts_create(
+		TunnelConfig_bindport(tc));
+	PSC_TcpServerOpts_bind(opts, TunnelConfig_bindhost(tc));
+	PSC_TcpServerOpts_setProto(opts, TunnelConfig_serverproto(tc));
+	PSC_TcpServerOpts_connWait(opts);
+	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts(opts);
+	PSC_Server *server = PSC_Server_createTcp(opts);
+	PSC_TcpServerOpts_destroy(opts);
 	if (!server)
 	{
 	    PSC_EAStartup_return(args, EXIT_FAILURE);
@@ -245,49 +253,25 @@ static void svshutdown(void *receiver, void *sender, void *args)
     servsize = 0;
 }
 
-static int daemonrun(void *data)
-{
-    (void)data;
-
-    int rc = EXIT_FAILURE;
-
-    if (PSC_Service_init() >= 0)
-    {
-	PSC_Service_setTickInterval(1000);
-	PSC_Event_register(PSC_Service_prestartup(), 0, svprestartup, 0);
-	if (Config_daemonize(cfg))
-	{
-	    PSC_Event_register(PSC_Service_startup(), 0, svstartup, 0);
-	}
-	PSC_Event_register(PSC_Service_shutdown(), 0, svshutdown, 0);
-
-	PSC_ThreadOpts_init(8);
-	PSC_ThreadOpts_maxThreads(16);
-	if (PSC_ThreadPool_init() >= 0)
-	{
-	    rc = PSC_Service_run();
-	    PSC_ThreadPool_done();
-	}
-	PSC_Service_done();
-    }
-
-    return rc;
-}
-
 SOLOCAL int Tlsc_run(const Config *config)
 {
     cfg = config;
 
-    PSC_RunOpts_init(daemonrun, 0, Config_pidfile(cfg));
+    PSC_RunOpts_init(Config_pidfile(cfg));
     PSC_RunOpts_runas(Config_uid(cfg), Config_gid(cfg));
+
+    PSC_ThreadOpts_init(8);
+    PSC_ThreadOpts_maxThreads(16);
 
     if (Config_verbose(cfg))
     {
 	PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
     }
+
     if (Config_daemonize(cfg))
     {
 	PSC_Log_setSyslogLogger(LOGIDENT, LOG_DAEMON, 1);
+	PSC_Event_register(PSC_Service_startup(), 0, svstartup, 0);
     }
     else
     {
@@ -295,6 +279,9 @@ SOLOCAL int Tlsc_run(const Config *config)
 	PSC_Log_setFileLogger(stderr);
     }
 
-    return PSC_Daemon_run();
+    PSC_Event_register(PSC_Service_prestartup(), 0, svprestartup, 0);
+    PSC_Event_register(PSC_Service_shutdown(), 0, svshutdown, 0);
+
+    return PSC_Service_run();
 }
 
