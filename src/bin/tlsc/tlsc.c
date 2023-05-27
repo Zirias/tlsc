@@ -37,7 +37,7 @@ static void datareceived(void *receiver, void *sender, void *args)
 
     PSC_Connection *c = receiver;
     PSC_EADataReceived_markHandling(args);
-    PSC_Connection_write(c, PSC_EADataReceived_buf(args),
+    PSC_Connection_sendAsync(c, PSC_EADataReceived_buf(args),
 	    PSC_EADataReceived_size(args), args);
 }
 
