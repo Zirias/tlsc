@@ -93,7 +93,7 @@ static void connected(void *receiver, void *sender, void *args)
     }
     logconnected(ctx);
 
-    PSC_Connection_activate(cl);
+    PSC_Connection_resume(cl);
 }
 
 static void connclosed(void *receiver, void *sender, void *args)
@@ -159,6 +159,8 @@ static void newclient(void *receiver, void *sender, void *args)
     ServCtx *ctx = receiver;
     PSC_Connection *cl = args;
 
+    PSC_Connection_pause(cl);
+
     ConnCtx *cctx = PSC_malloc(sizeof *cctx);
     memset(cctx, 0, sizeof *cctx);
     cctx->client = cl;
@@ -203,7 +205,6 @@ static void svprestartup(void *receiver, void *sender, void *args)
 		TunnelConfig_bindport(tc));
 	PSC_TcpServerOpts_bind(opts, TunnelConfig_bindhost(tc));
 	PSC_TcpServerOpts_setProto(opts, TunnelConfig_serverproto(tc));
-	PSC_TcpServerOpts_connWait(opts);
 	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts(opts);
 	PSC_Server *server = PSC_Server_createTcp(opts);
 	PSC_TcpServerOpts_destroy(opts);
