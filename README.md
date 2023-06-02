@@ -8,6 +8,11 @@ remote host, adding TLS encryption on either the client or the server side.
 
 It does the job in the simplest possible way, using all-standard options.
 
+## Dependencies
+
+`tlsc` needs `libposercore` from the [poser](https://github.com/Zirias/poser)
+package (built with TLS support).
+
 ## Usage
 ```
 Usage: tlsc [-fnv] [-b hits] [-g group] [-p pidfile] [-u user]
