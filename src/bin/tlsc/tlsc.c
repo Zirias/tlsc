@@ -168,9 +168,12 @@ static void newclient(void *receiver, void *sender, void *args)
     PSC_TcpClientOpts *opts = PSC_TcpClientOpts_create(
 	    TunnelConfig_remotehost(ctx->tc),
 	    TunnelConfig_remoteport(ctx->tc));
-    PSC_TcpClientOpts_enableTls(opts, 
-	    TunnelConfig_certfile(ctx->tc),
-	    TunnelConfig_keyfile(ctx->tc));
+    if (!TunnelConfig_server(ctx->tc))
+    {
+	PSC_TcpClientOpts_enableTls(opts,
+		TunnelConfig_certfile(ctx->tc),
+		TunnelConfig_keyfile(ctx->tc));
+    }
     PSC_TcpClientOpts_setProto(opts,
 	    TunnelConfig_clientproto(ctx->tc));
     PSC_TcpClientOpts_setBlacklistHits(opts,
@@ -205,6 +208,12 @@ static void svprestartup(void *receiver, void *sender, void *args)
 		TunnelConfig_bindport(tc));
 	PSC_TcpServerOpts_bind(opts, TunnelConfig_bindhost(tc));
 	PSC_TcpServerOpts_setProto(opts, TunnelConfig_serverproto(tc));
+	if (TunnelConfig_server(tc))
+	{
+	    PSC_TcpServerOpts_enableTls(opts,
+		    TunnelConfig_certfile(tc),
+		    TunnelConfig_keyfile(tc));
+	}
 	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts(opts);
 	PSC_Server *server = PSC_Server_createTcp(opts);
 	PSC_TcpServerOpts_destroy(opts);

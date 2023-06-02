@@ -40,6 +40,7 @@ struct TunnelConfig
     int bindport;
     int remoteport;
     int blacklisthits;
+    int server;
     int noverify;
     PSC_Proto serverproto;
     PSC_Proto clientproto;
@@ -66,19 +67,27 @@ static void usage(const char *prgname)
 	    "\t               using these values:\n\n"
 	    "\t\thost        hostname or IP address to bind to and listen\n"
 	    "\t\tport        port to listen on\n"
-	    "\t\tremotehost  remote host name to forward to with TLS\n"
+	    "\t\tremotehost  remote host name to forward to\n"
 	    "\t\tremoteport  port of remote service, default: same as `port'\n"
 	    "\t\tk=v         key-value pair of additional tunnel options,\n"
 	    "\t\t            the following are available:\n"
 	    "\t\t  b=hits    a positive number enables blacklisting\n"
 	    "\t\t            specific socket addresses for `hits'\n"
 	    "\t\t            connection attempts after failure to connect\n"
-	    "\t\t  c=cert    `cert' is used as a client certificate file to\n"
-	    "\t\t            present to the remote\n"
-	    "\t\t  k=key     `key' is the key file for the certificate\n"
+	    "\t\t  c=cert    `cert' is used as a certificate file to present\n"
+	    "\t\t            to the remote. When given, the `k' option is\n"
+	    "\t\t            required as well.\n"
+	    "\t\t  k=key     `key' is the key file for the certificate. When\n"
+	    "\t\t            given, the `c' option is required as well.\n"
 	    "\t\t  p=[4|6]   only use IPv4 or IPv6\n"
 	    "\t\t  pc=[4|6]  only use IPv4 or IPv6 when connecting as client\n"
 	    "\t\t  ps=[4|6]  only use IPv4 or IPv6 when listening as server\n"
+	    "\t\t  s=[0|1]   disable (0) or enable (1) server mode. In\n"
+	    "\t\t            client mode (default), the forwarded connection\n"
+	    "\t\t            uses TLS. In server mode, incoming connections\n"
+	    "\t\t            use TLS. When enabling server mode, the `c' and\n"
+	    "\t\t            `k' options are required to configure a\n"
+	    "\t\t            certificate.\n"
 	    "\t\t  v=[0|1]   disable (0) or enable (1) server certificate\n"
 	    "\t\t            verification (default: enabled)\n"
 	    "\n"
@@ -226,6 +235,7 @@ static TunnelConfig *parseTunnel(char *arg)
     char *certfile = 0;
     char *keyfile = 0;
     int blacklisthits = 0;
+    int server = 0;
     int noverify = 0;
     PSC_Proto serverproto = PSC_P_ANY;
     PSC_Proto clientproto = PSC_P_ANY;
@@ -268,6 +278,12 @@ static TunnelConfig *parseTunnel(char *arg)
 		else if (!strcmp(k, "ps")) serverproto = p;
 		else return 0;
 	    }
+	    else if (!strcmp(k, "s"))
+	    {
+		if (!strcmp(v, "0")) server = 0;
+		else if (!strcmp(v, "1")) server = 1;
+		else return 0;
+	    }
 	    else if (!strcmp(k, "v"))
 	    {
 		if (!strcmp(v, "0")) noverify = 1;
@@ -281,6 +297,9 @@ static TunnelConfig *parseTunnel(char *arg)
 optdone: ;
     }
 
+    if ((server && !certfile) || (server && !keyfile)
+	    || (keyfile && !certfile) || (certfile && !keyfile)) return 0;
+
     TunnelConfig *tun = PSC_malloc(sizeof *tun);
     tun->next = 0;
     tun->bindhost = bindhost;
@@ -290,6 +309,7 @@ optdone: ;
     tun->bindport = bindport;
     tun->remoteport = remoteport;
     tun->blacklisthits = blacklisthits;
+    tun->server = server;
     tun->noverify = noverify;
     tun->serverproto = serverproto;
     tun->clientproto = clientproto;
@@ -441,6 +461,11 @@ SOLOCAL int TunnelConfig_remoteport(const TunnelConfig *self)
 SOLOCAL int TunnelConfig_blacklisthits(const TunnelConfig *self)
 {
     return self->blacklisthits;
+}
+
+SOLOCAL int TunnelConfig_server(const TunnelConfig *self)
+{
+    return self->server;
 }
 
 SOLOCAL int TunnelConfig_noverify(const TunnelConfig *self)

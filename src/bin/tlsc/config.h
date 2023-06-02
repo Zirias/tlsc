@@ -18,6 +18,7 @@ const char *TunnelConfig_keyfile(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_bindport(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_remoteport(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_blacklisthits(const TunnelConfig *self) CMETHOD ATTR_PURE;
+int TunnelConfig_server(const TunnelConfig *self) CMETHOD ATTR_PURE;
 int TunnelConfig_noverify(const TunnelConfig *self) CMETHOD ATTR_PURE;
 PSC_Proto TunnelConfig_serverproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
 PSC_Proto TunnelConfig_clientproto(const TunnelConfig *self) CMETHOD ATTR_PURE;
