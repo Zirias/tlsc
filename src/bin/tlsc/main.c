@@ -6,11 +6,11 @@
 int main(int argc, char **argv)
 {
     int rc = EXIT_FAILURE;
-    Config *cfg = Config_fromOpts(argc, argv);
+    PSC_Config *cfg = Config_fromOpts(argc, argv);
     if (cfg)
     {
 	rc = Tlsc_run(cfg);
-	Config_destroy(cfg);
+	PSC_Config_destroy(cfg);
     }
     return rc;
 }

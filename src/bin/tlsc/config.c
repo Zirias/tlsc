@@ -1,527 +1,266 @@
 #include "config.h"
 
-#include <poser/core.h>
+#include <poser/core/proto.h>
 
-#include <errno.h>
 #include <grp.h>
-#include <limits.h>
 #include <pwd.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/types.h>
-
-#define ARGBUFSZ 16
 
 #ifndef PIDFILE
 #define PIDFILE "/var/run/tlsc.pid"
 #endif
 
-static const char *pidfile = PIDFILE;
-
-struct Config
+static void parseuser(PSC_ConfigParserCtx *ctx)
 {
-    TunnelConfig *tunnel;
-    const char *pidfile;
-    long uid;
-    long gid;
-    int daemonize;
-    int numerichosts;
-    int verbose;
-};
-
-struct TunnelConfig
-{
-    TunnelConfig *next;
-    const char *bindhost;
-    const char *remotehost;
-    const char *certfile;
-    const char *keyfile;
-    int bindport;
-    int remoteport;
-    int blacklisthits;
-    int server;
-    int noverify;
-    PSC_Proto serverproto;
-    PSC_Proto clientproto;
-};
-
-static int addArg(char *args, int *idx, char opt)
-    ATTR_NONNULL((1)) ATTR_NONNULL((2));
-static int intArg(int *setting, char *op, int min, int max, int base, char **p)
-    ATTR_NONNULL((1)) ATTR_NONNULL((2));
-static int longArg(long *setting, char *op)
-    ATTR_NONNULL((1)) ATTR_NONNULL((2));
-static int optArg(Config *config, char *args, int *idx, char *op)
-    ATTR_NONNULL((1)) ATTR_NONNULL((2)) ATTR_NONNULL((3)) ATTR_NONNULL((4));
-static void usage(const char *prgname)
-    ATTR_NONNULL((1));
-
-static void usage(const char *prgname)
-{
-    fprintf(stderr,
-	    "Usage: %s [-fnv] [-b hits] [-g group] [-p pidfile] [-u user]\n"
-	    "       tunspec [tunspec ...]\n", prgname);
-    fputs("\n\ttunspec        description of a tunnel in the format\n"
-	    "\t               host:port:remotehost[:remoteport][:k=v[:...]]\n"
-	    "\t               using these values:\n\n"
-	    "\t\thost        hostname or IP address to bind to and listen\n"
-	    "\t\tport        port to listen on\n"
-	    "\t\tremotehost  remote host name to forward to\n"
-	    "\t\tremoteport  port of remote service, default: same as `port'\n"
-	    "\t\tk=v         key-value pair of additional tunnel options,\n"
-	    "\t\t            the following are available:\n"
-	    "\t\t  b=hits    a positive number enables blacklisting\n"
-	    "\t\t            specific socket addresses for `hits'\n"
-	    "\t\t            connection attempts after failure to connect\n"
-	    "\t\t  c=cert    `cert' is used as a certificate file to present\n"
-	    "\t\t            to the remote. When given, the `k' option is\n"
-	    "\t\t            required as well.\n"
-	    "\t\t  k=key     `key' is the key file for the certificate. When\n"
-	    "\t\t            given, the `c' option is required as well.\n"
-	    "\t\t  p=[4|6]   only use IPv4 or IPv6\n"
-	    "\t\t  pc=[4|6]  only use IPv4 or IPv6 when connecting as client\n"
-	    "\t\t  ps=[4|6]  only use IPv4 or IPv6 when listening as server\n"
-	    "\t\t  s=[0|1]   disable (0) or enable (1) server mode. In\n"
-	    "\t\t            client mode (default), the forwarded connection\n"
-	    "\t\t            uses TLS. In server mode, incoming connections\n"
-	    "\t\t            use TLS. When enabling server mode, the `c' and\n"
-	    "\t\t            `k' options are required to configure a\n"
-	    "\t\t            certificate.\n"
-	    "\t\t  v=[0|1]   disable (0) or enable (1) server certificate\n"
-	    "\t\t            verification (default: enabled)\n"
-	    "\n"
-	    "\t               Example:\n"
-	    "\n"
-	    "\t               \"localhost:12345:foo.example:443:b=2:pc=6\"\n"
-	    "\n"
-	    "\t               This will listen on localhost:12345 using any\n"
-	    "\t               IP version available, and connect clients to\n"
-	    "\t               foo.example:443 with TLS using only IPv6.\n"
-	    "\t               Specific socket addresses of foo.example:443\n"
-	    "\t               will be blacklisted for 2 hits after a\n"
-	    "\t               connection error.\n"
-	    "\n"
-	    "\t-f             run in foreground, do not detach\n"
-	    "\t-g group       group name/id to run as\n"
-	    "\t               (defaults to primary group of user, see -u)\n"
-	    "\t-n             use numeric hosts only, do not attempt\n"
-	    "\t               to resolve addresses\n"
-	    "\t-p pidfile     use `pidfile' instead of " PIDFILE "\n"
-	    "\t-u user        user name/id to run as\n"
-	    "\t               (defaults to current user)\n"
-	    "\t-v             debug mode - will log [DEBUG] messages\n",
-	    stderr);
-}
-
-static int addArg(char *args, int *idx, char opt)
-{
-    if (*idx == ARGBUFSZ) return -1;
-    memmove(args+1, args, (*idx)++);
-    args[0] = opt;
-    return 0;
-}
-
-static int intArg(int *setting, char *op, int min, int max, int base, char **p)
-{
-    char *endp;
-    errno = 0;
-    long val = strtol(op, &endp, base);
-    if (errno == ERANGE || (!p && *endp) || val < min || val > max) return -1;
-    *setting = val;
-    if (p) *p = endp;
-    return 0;
-}
-
-static int longArg(long *setting, char *op)
-{
-    char *endp;
-    errno = 0;
-    long val = strtol(op, &endp, 10);
-    if (errno == ERANGE || *endp) return -1;
-    *setting = val;
-    return 0;
-}
-
-static int optArg(Config *config, char *args, int *idx, char *op)
-{
-    if (!*idx) return -1;
-    switch (args[--*idx])
+    struct passwd *p;
+    if (PSC_ConfigParserCtx_succeeded(ctx))
     {
-	case 'g':
-	    if (longArg(&config->gid, op) < 0)
-	    {
-		struct group *g;
-		if (!(g = getgrnam(op))) return -1;
-		config->gid = g->gr_gid;
-	    }
-	    break;
-	case 'p':
-	    config->pidfile = op;
-	    break;
-	case 'u':
-	    if (longArg(&config->uid, op) < 0)
-	    {
-		struct passwd *p;
-		if (!(p = getpwnam(op))) return -1;
-		config->uid = p->pw_uid;
-		if (config->gid == -1)
-		{
-		    config->gid = p->pw_gid;
-		}
-	    }
-	    break;
-	default:
-	    return -1;
-    }
-    return 0;
-}
-
-static char *tuntok(char *str, char sep)
-{
-    static char *s;
-    if (str) s = str;
-    if (!s || !*s) return 0;
-
-    char *ret = s;
-    int quot = 0;
-    char *c;
-    for (c = s; *c; ++c)
-    {
-	if (*c == '[' && ++quot) continue;
-	if (*c == ']' && quot && --quot) continue;
-	if (!quot && *c == sep)
+	long uid = PSC_ConfigParserCtx_integer(ctx);
+	if (!(p = getpwuid(uid)))
 	{
-	    *c++ = 0;
-	    break;
+	    PSC_ConfigParserCtx_fail(ctx, "Unknown uid: %ld", uid);
 	}
     }
-    s = c;
-    return ret;
-}
-
-static char *tunhosttok(char *str)
-{
-    char *ret = tuntok(str, ':');
-    if (!ret) return 0;
-    if (*ret != '[') return ret;
-    ++ret;
-    ret[strcspn(ret, "]")] = 0;
-    return ret;
-}
-
-static int tunkv(char *opt, char **k, char **v)
-{
-    size_t eqpos = strcspn(opt, "=");
-    if (!opt[eqpos]) return -1;
-    *k = opt;
-    opt[eqpos] = 0;
-    *v = opt+eqpos+1;
-    return 0;
-}
-
-static TunnelConfig *parseTunnel(char *arg)
-{
-    char *bindhost = tunhosttok(arg);
-    if (!bindhost) return 0;
-    char *bindportstr = tuntok(0, ':');
-    if (!bindportstr) return 0;
-    char *remotehost = tunhosttok(0);
-    if (!remotehost) return 0;
-    int bindport;
-    if (intArg(&bindport, bindportstr, 1, 65535, 10, 0) < 0) return 0;
-    int remoteport = bindport;
-
-    char *certfile = 0;
-    char *keyfile = 0;
-    int blacklisthits = 0;
-    int server = 0;
-    int noverify = 0;
-    PSC_Proto serverproto = PSC_P_ANY;
-    PSC_Proto clientproto = PSC_P_ANY;
-
-    char *k;
-    char *v;
-    char *opt = tuntok(0, ':');
-    if (opt)
+    else
     {
-	if (tunkv(opt, &k, &v) < 0)
+	const char *user = PSC_ConfigParserCtx_string(ctx);
+	if (!(p = getpwnam(user)))
 	{
-	    if (intArg(&remoteport, opt, 1, 65535, 10, 0) < 0) return 0;
-	    if ((opt = tuntok(0, ':')))
-	    {
-		if (tunkv(opt, &k, &v) < 0) return 0;
-	    }
-	    else goto optdone;
+	    PSC_ConfigParserCtx_fail(ctx, "Unknown user: %s", user);
 	}
-
-	for (;;)
-	{
-	    if (!strcmp(k, "b"))
-	    {
-		if (intArg(&blacklisthits, v, 0, INT_MAX, 10, 0) < 0) return 0;
-	    }
-	    else if (!strcmp(k, "c")) certfile = v;
-	    else if (!strcmp(k, "k")) keyfile = v;
-	    else if (*k == 'p')
-	    {
-		PSC_Proto p = PSC_P_ANY;
-		if (!strcmp(v, "4")) p = PSC_P_IPv4;
-		else if (!strcmp(v, "6")) p = PSC_P_IPv6;
-		else return 0;
-		if (!k[1])
-		{
-		    serverproto = p;
-		    clientproto = p;
-		}
-		else if (!strcmp(k, "pc")) clientproto = p;
-		else if (!strcmp(k, "ps")) serverproto = p;
-		else return 0;
-	    }
-	    else if (!strcmp(k, "s"))
-	    {
-		if (!strcmp(v, "0")) server = 0;
-		else if (!strcmp(v, "1")) server = 1;
-		else return 0;
-	    }
-	    else if (!strcmp(k, "v"))
-	    {
-		if (!strcmp(v, "0")) noverify = 1;
-		else if (!strcmp(v, "1")) noverify = 0;
-		else return 0;
-	    }
-	    else return 0;
-	    if (!(opt = tuntok(0, ':'))) break;
-	    if (tunkv(opt, &k, &v) < 0) return 0;
-	}
-optdone: ;
+	else PSC_ConfigParserCtx_setInteger(ctx, p->pw_uid);
     }
-
-    if ((server && !certfile) || (server && !keyfile)
-	    || (keyfile && !certfile) || (certfile && !keyfile)) return 0;
-
-    TunnelConfig *tun = PSC_malloc(sizeof *tun);
-    tun->next = 0;
-    tun->bindhost = bindhost;
-    tun->remotehost = remotehost;
-    tun->certfile = certfile;
-    tun->keyfile = keyfile;
-    tun->bindport = bindport;
-    tun->remoteport = remoteport;
-    tun->blacklisthits = blacklisthits;
-    tun->server = server;
-    tun->noverify = noverify;
-    tun->serverproto = serverproto;
-    tun->clientproto = clientproto;
-    return tun;
-}
-
-SOLOCAL Config *Config_fromOpts(int argc, char **argv)
-{
-    int endflags = 0;
-    int escapedash = 0;
-    int needtun = 1;
-    int arg;
-    int naidx = 0;
-    char needargs[ARGBUFSZ];
-    const char onceflags[] = "fgnpuv";
-    char seen[sizeof onceflags - 1] = {0};
-
-    Config *config = PSC_malloc(sizeof *config);
-    memset(config, 0, sizeof *config);
-    config->pidfile = pidfile;
-    config->daemonize = 1;
-    config->uid = -1;
-    config->gid = -1;
-
-    const char *prgname = "tlsc";
-    if (argc > 0) prgname = argv[0];
-
-    for (arg = 1; arg < argc; ++arg)
+    if (p)
     {
-	char *o = argv[arg];
-	if (!escapedash && *o == '-' && o[1] == '-' && !o[2])
-	{
-	    escapedash = 1;
-	    continue;
-	}
-
-	if (!endflags && !escapedash && *o == '-' && o[1])
-	{
-	    if (naidx) goto error;
-
-	    for (++o; *o; ++o)
-	    {
-		const char *sip = strchr(onceflags, *o);
-		if (sip)
-		{
-		    int si = (int)(sip - onceflags);
-		    if (seen[si])
-		    {
-			usage(prgname);
-			goto error;
-		    }
-		    seen[si] = 1;
-		}
-		switch (*o)
-		{
-		    case 'f':
-			config->daemonize = 0;
-			break;
-
-		    case 'n':
-			config->numerichosts = 1;
-			break;
-
-		    case 'v':
-			config->verbose = 1;
-			break;
-
-		    case 'g':
-		    case 'p':
-		    case 'u':
-			if (addArg(needargs, &naidx, *o) < 0) goto silenterror;
-			break;
-
-		    default:
-			if (optArg(config, needargs, &naidx, o) < 0) goto error;
-			goto next;
-		}
-	    }
-	}
-	else if (optArg(config, needargs, &naidx, o) < 0)
-	{
-	    TunnelConfig *t = parseTunnel(o);
-	    if (t)
-	    {
-		if (!config->tunnel) config->tunnel = t;
-		else
-		{
-		    TunnelConfig *p = config->tunnel;
-		    while (p->next) p = p->next;
-		    p->next = t;
-		}
-		needtun = 0;
-	    }
-	    else goto error;
-	    endflags = 1;
-	}
-next:	;
+	PSC_ConfigParserCtx_setIntegerFor(ctx, CFG_GROUP, p->pw_gid);
+	PSC_ConfigParserCtx_succeed(ctx);
     }
-    if (naidx || needtun) goto error;
-    return config;
-
-error:
-    usage(prgname);
-silenterror:
-    Config_destroy(config);
-    return 0;
 }
 
-SOLOCAL const TunnelConfig *Config_tunnel(const Config *self)
+static void parsegroup(PSC_ConfigParserCtx *ctx)
 {
-    return self->tunnel;
-}
-
-SOLOCAL const TunnelConfig *TunnelConfig_next(const TunnelConfig *self)
-{
-    return self->next;
-}
-
-SOLOCAL const char *TunnelConfig_bindhost(const TunnelConfig *self)
-{
-    return self->bindhost;
-}
-
-SOLOCAL const char *TunnelConfig_remotehost(const TunnelConfig *self)
-{
-    return self->remotehost;
-}
-
-SOLOCAL const char *TunnelConfig_certfile(const TunnelConfig *self)
-{
-    return self->certfile;
-}
-
-SOLOCAL const char *TunnelConfig_keyfile(const TunnelConfig *self)
-{
-    return self->keyfile;
-}
-
-SOLOCAL int TunnelConfig_bindport(const TunnelConfig *self)
-{
-    return self->bindport;
-}
-
-SOLOCAL int TunnelConfig_remoteport(const TunnelConfig *self)
-{
-    return self->remoteport;
-}
-
-SOLOCAL int TunnelConfig_blacklisthits(const TunnelConfig *self)
-{
-    return self->blacklisthits;
-}
-
-SOLOCAL int TunnelConfig_server(const TunnelConfig *self)
-{
-    return self->server;
-}
-
-SOLOCAL int TunnelConfig_noverify(const TunnelConfig *self)
-{
-    return self->noverify;
-}
-
-SOLOCAL PSC_Proto TunnelConfig_serverproto(const TunnelConfig *self)
-{
-    return self->serverproto;
-}
-
-SOLOCAL PSC_Proto TunnelConfig_clientproto(const TunnelConfig *self)
-{
-    return self->clientproto;
-}
-
-SOLOCAL const char *Config_pidfile(const Config *self)
-{
-    return self->pidfile;
-}
-
-SOLOCAL long Config_uid(const Config *self)
-{
-    return self->uid;
-}
-
-SOLOCAL long Config_gid(const Config *self)
-{
-    return self->gid;
-}
-
-SOLOCAL int Config_daemonize(const Config *self)
-{
-    return self->daemonize;
-}
-
-SOLOCAL int Config_numerichosts(const Config *self)
-{
-    return self->numerichosts;
-}
-
-SOLOCAL int Config_verbose(const Config *self)
-{
-    return self->verbose;
-}
-
-SOLOCAL void Config_destroy(Config *self)
-{
-    if (!self) return;
-    TunnelConfig *t = self->tunnel;
-    while (t)
+    struct group *g;
+    if (PSC_ConfigParserCtx_succeeded(ctx))
     {
-	TunnelConfig *n = t->next;
-	free(t);
-	t = n;
+	long gid = PSC_ConfigParserCtx_integer(ctx);
+	if (!(g = getgrgid(gid)))
+	{
+	    PSC_ConfigParserCtx_fail(ctx, "Unknown gid: %ld", gid);
+	}
     }
-    free(self);
+    else
+    {
+	const char *group = PSC_ConfigParserCtx_string(ctx);
+	if ((g = getgrnam(group)))
+	{
+	    PSC_ConfigParserCtx_setInteger(ctx, g->gr_gid);
+	    PSC_ConfigParserCtx_succeed(ctx);
+	}
+	else PSC_ConfigParserCtx_fail(ctx, "Unknown group: %s", group);
+    }
 }
+
+static void parseproto(PSC_ConfigParserCtx *ctx)
+{
+    if (!PSC_ConfigParserCtx_succeeded(ctx)) return;
+    long protoarg = PSC_ConfigParserCtx_integer(ctx);
+    if (protoarg == 4) PSC_ConfigParserCtx_setInteger(ctx, (long)PSC_P_IPv4);
+    else if (protoarg == 6) PSC_ConfigParserCtx_setInteger(
+	    ctx, (long)PSC_P_IPv6);
+    else
+    {
+	PSC_ConfigParserCtx_fail(ctx,
+		"Invalid protocol version: %ld", protoarg);
+    }
+}
+
+static void parseanyproto(PSC_ConfigParserCtx *ctx)
+{
+    parseproto(ctx);
+    if (!PSC_ConfigParserCtx_succeeded(ctx)) return;
+    long proto = PSC_ConfigParserCtx_integer(ctx);
+    PSC_ConfigParserCtx_setIntegerFor(ctx, CFG_T_SERVERPROTO, proto);
+    PSC_ConfigParserCtx_setIntegerFor(ctx, CFG_T_CLIENTPROTO, proto);
+}
+
+static void parsetunport(PSC_ConfigParserCtx *ctx)
+{
+    if (!PSC_ConfigParserCtx_succeeded(ctx)) return;
+    PSC_ConfigParserCtx_setIntegerFor(ctx, CFG_T_REMOTEPORT,
+	    PSC_ConfigParserCtx_integer(ctx));
+}
+
+static void validateport(PSC_ConfigParserCtx *ctx)
+{
+    long port = PSC_ConfigParserCtx_integer(ctx);
+    if (port < 1 || port > 65535)
+    {
+	PSC_ConfigParserCtx_fail(ctx, "Invalid port number: %ld", port);
+    }
+    else PSC_ConfigParserCtx_succeed(ctx);
+}
+
+static void validatetunnel(PSC_ConfigParserCtx *ctx)
+{
+    const PSC_Config *tuncfg = PSC_ConfigParserCtx_section(ctx);
+    int isServer = !!PSC_Config_get(tuncfg, CFG_T_SERVER);
+    int haveCert = !!PSC_Config_get(tuncfg, CFG_T_CERTFILE);
+    int haveKey = !!PSC_Config_get(tuncfg, CFG_T_KEYFILE);
+
+    if (haveCert && !haveKey) PSC_ConfigParserCtx_fail(ctx,
+	    "A certificate file requires a key file");
+    else if (haveKey && !haveCert) PSC_ConfigParserCtx_fail(ctx,
+	    "A key file requires a cerrtificate file");
+    else if (isServer && !haveCert) PSC_ConfigParserCtx_fail(ctx,
+	    "A tunnel in server mode requires a certificate");
+    else PSC_ConfigParserCtx_succeed(ctx);
+}
+
+SOLOCAL PSC_Config *Config_fromOpts(int argc, char **argv)
+{
+    PSC_ConfigElement *e;
+
+    PSC_ConfigSection *root = PSC_ConfigSection_create(0);
+    PSC_ConfigSection_addHelpArg(root, 0, 0, 0);
+    PSC_ConfigSection_addVersionArg(root, "tlsc 2.0", 0, 0, 0);
+
+    PSC_ConfigSection *tun = PSC_ConfigSection_create(CFG_TUNNEL);
+    PSC_ConfigSection_validate(tun, validatetunnel);
+
+    e = PSC_ConfigElement_createString(CFG_T_HOST, 0, 1);
+    PSC_ConfigElement_argInfo(e, -1, 0);
+    PSC_ConfigElement_describe(e,
+	    "Hostname or IP address to bind to and listen on.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_T_PORT, 0, 1);
+    PSC_ConfigElement_argInfo(e, -1, 0);
+    PSC_ConfigElement_describe(e, "Port to listen on.");
+    PSC_ConfigElement_parse(e, parsetunport);
+    PSC_ConfigElement_validate(e, validateport);
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createString(CFG_T_REMOTEHOST, 0, 1);
+    PSC_ConfigElement_argInfo(e, -1, 0);
+    PSC_ConfigElement_describe(e,
+	    "Remote hostname or IP address to forward to.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_T_REMOTEPORT, 0, 0);
+    PSC_ConfigElement_argInfo(e, -1, 0);
+    PSC_ConfigElement_describe(e,
+	    "Remote port to forward to, default: same as `port'.");
+    PSC_ConfigElement_validate(e, validateport);
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_T_BLACKLISTHITS, 0, 0);
+    PSC_ConfigElement_argInfo(e, 'b', "hits");
+    PSC_ConfigElement_describe(e, "A positive number enables blackisting "
+	    "specific socket addresses for `hits' connection attempts "
+	    "after failure to connect.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createString(CFG_T_CERTFILE, 0, 0);
+    PSC_ConfigElement_argInfo(e, 'c', "cert");
+    PSC_ConfigElement_describe(e, "Use a certificate file to present to the "
+	    "remote. When given, a key file is required as well.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createString(CFG_T_KEYFILE, 0, 0);
+    PSC_ConfigElement_argInfo(e, 'k', "key");
+    PSC_ConfigElement_describe(e, "The key file for the certificate. "
+	    "When given, a certificate must be configured as well.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger("proto", 0, 0);
+    PSC_ConfigElement_argInfo(e, 'P', "[4|6]");
+    PSC_ConfigElement_describe(e, "Only use IPv4 or IPv6.");
+    PSC_ConfigElement_parse(e, parseanyproto);
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_T_CLIENTPROTO, 0, 0);
+    PSC_ConfigElement_argInfo(e, 'C', "[4|6]");
+    PSC_ConfigElement_describe(e,
+	    "Only use IPv4 or IPv6 when connection as a client.");
+    PSC_ConfigElement_parse(e, parseproto);
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_T_SERVERPROTO, 0, 0);
+    PSC_ConfigElement_argInfo(e, 'S', "[4|6]");
+    PSC_ConfigElement_describe(e,
+	    "Only use IPv4 or IPv6 when listening as a server.");
+    PSC_ConfigElement_parse(e, parseproto);
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createBool(CFG_T_SERVER);
+    PSC_ConfigElement_argInfo(e, 's', 0);
+    PSC_ConfigElement_describe(e, "Enable or disable server mode (default: "
+	    "disabled). In client mode, the forwarded connections use TLS. "
+	    "In server mode, incoming connections use TLS.\n"
+	    "When enabling server mode, a certificate is required.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createBool(CFG_T_NOVERIFY);
+    PSC_ConfigElement_argInfo(e, 'N', 0);
+    PSC_ConfigElement_describe(e, "In client mode, enabling this option will "
+	    "accept any server certificate. Otherwise (default), the server "
+	    "certificate is validated agains the local store of trusted CAs.");
+    PSC_ConfigSection_add(tun, e);
+
+    e = PSC_ConfigElement_createSectionList(tun, 1);
+    PSC_ConfigElement_argInfo(e, -1, "tunspec");
+    PSC_ConfigElement_describe(e, "Description of a tunnel.");
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createBool(CFG_FOREGROUND);
+    PSC_ConfigElement_argInfo(e, 'f', 0);
+    PSC_ConfigElement_describe(e, "Run in foreground, do not detach.");
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_GROUP, -1, 0);
+    PSC_ConfigElement_argInfo(e, 'g', "group");
+    PSC_ConfigElement_parse(e, parsegroup);
+    PSC_ConfigElement_describe(e, "Group name or id to run as. If a user "
+	    "is given, this defaults to its primary group.");
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createBool(CFG_NUMERIC);
+    PSC_ConfigElement_argInfo(e, 'n', 0);
+    PSC_ConfigElement_describe(e, "Use numeric hosts only, do not attempt "
+	    "to resolve addresses to hostnames.");
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createString(CFG_PIDFILE, PIDFILE, 0);
+    PSC_ConfigElement_argInfo(e, 'p', "pidfile");
+    PSC_ConfigElement_describe(e, "Use this pidfile instead of the default "
+	    PIDFILE);
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createInteger(CFG_USER, -1, 0);
+    PSC_ConfigElement_argInfo(e, 'u', "user");
+    PSC_ConfigElement_parse(e, parseuser);
+    PSC_ConfigElement_describe(e, "User name or id to run as.");
+    PSC_ConfigSection_add(root, e);
+
+    e = PSC_ConfigElement_createBool(CFG_VERBOSE);
+    PSC_ConfigElement_argInfo(e, 'v', 0);
+    PSC_ConfigElement_describe(e,
+	    "Enable debug mode, will log debug messages.");
+    PSC_ConfigSection_add(root, e);
+
+    PSC_ConfigParser *parser = PSC_ConfigParser_create(root);
+    PSC_ConfigParser_addArgs(parser, "tlsc", argc, argv);
+    PSC_ConfigParser_argsAutoUsage(parser);
+    PSC_ConfigParser_autoPage(parser);
+
+    PSC_Config *cfg = 0;
+    int rc = PSC_ConfigParser_parse(parser, &cfg);
+    PSC_ConfigParser_destroy(parser);
+    PSC_ConfigSection_destroy(root);
+
+    if (rc < 0) exit(EXIT_FAILURE);
+    else if (rc > 0) exit(EXIT_SUCCESS);
+
+    return cfg;
+}
+

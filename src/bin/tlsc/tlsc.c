@@ -14,7 +14,7 @@
 typedef struct ServCtx
 {
     PSC_Server *server;
-    const TunnelConfig *tc;
+    const PSC_Config *tc;
 } ServCtx;
 
 typedef struct ConnCtx
@@ -26,7 +26,7 @@ typedef struct ConnCtx
     int connected;
 } ConnCtx;
 
-static const Config *cfg;
+static const PSC_Config *cfg;
 static ServCtx *servers = 0;
 static size_t servcapa = 0;
 static size_t servsize = 0;
@@ -86,7 +86,7 @@ static void connected(void *receiver, void *sender, void *args)
     PSC_Event_register(PSC_Connection_dataSent(sv), cl, datasent, 0);
 
     ctx->connected = 1;
-    if (Config_numerichosts(cfg))
+    if (PSC_Config_get(cfg, CFG_NUMERIC))
     {
 	ctx->chost = PSC_Connection_remoteAddr(cl);
 	ctx->shost = PSC_Connection_remoteAddr(sv);
@@ -142,7 +142,7 @@ static void svConnCreated(void *receiver, PSC_Connection *sv)
 
     ctx->service = sv;
 
-    if (!Config_numerichosts(cfg))
+    if (!PSC_Config_get(cfg, CFG_NUMERIC))
     {
 	PSC_Event_register(PSC_Connection_nameResolved(sv), ctx,
 		nameresolved, 0);
@@ -166,20 +166,20 @@ static void newclient(void *receiver, void *sender, void *args)
     cctx->client = cl;
 
     PSC_TcpClientOpts *opts = PSC_TcpClientOpts_create(
-	    TunnelConfig_remotehost(ctx->tc),
-	    TunnelConfig_remoteport(ctx->tc));
-    if (!TunnelConfig_server(ctx->tc))
+	    PSC_Config_getString(ctx->tc, CFG_T_REMOTEHOST),
+	    PSC_Config_getInteger(ctx->tc, CFG_T_REMOTEPORT));
+    if (!PSC_Config_get(ctx->tc, CFG_T_SERVER))
     {
 	PSC_TcpClientOpts_enableTls(opts,
-		TunnelConfig_certfile(ctx->tc),
-		TunnelConfig_keyfile(ctx->tc));
+		PSC_Config_getString(ctx->tc, CFG_T_CERTFILE),
+		PSC_Config_getString(ctx->tc, CFG_T_KEYFILE));
     }
     PSC_TcpClientOpts_setProto(opts,
-	    TunnelConfig_clientproto(ctx->tc));
+	    PSC_Config_getInteger(ctx->tc, CFG_T_CLIENTPROTO));
     PSC_TcpClientOpts_setBlacklistHits(opts,
-	    TunnelConfig_blacklisthits(ctx->tc));
-    if (Config_numerichosts(cfg)) PSC_TcpClientOpts_numericHosts(opts);
-    if (TunnelConfig_noverify(ctx->tc))
+	    PSC_Config_getInteger(ctx->tc, CFG_T_BLACKLISTHITS));
+    if (PSC_Config_get(cfg, CFG_NUMERIC)) PSC_TcpClientOpts_numericHosts(opts);
+    if (PSC_Config_get(ctx->tc, CFG_T_NOVERIFY))
 	PSC_TcpClientOpts_disableCertVerify(opts);
 
     if (PSC_Connection_createTcpClientAsync(opts, cctx, svConnCreated) < 0)
@@ -189,7 +189,7 @@ static void newclient(void *receiver, void *sender, void *args)
     }
     PSC_TcpClientOpts_destroy(opts);
 
-    if (!Config_numerichosts(cfg))
+    if (!PSC_Config_get(cfg, CFG_NUMERIC))
     {
 	PSC_Event_register(PSC_Connection_nameResolved(cl), cctx,
 		nameresolved, 0);
@@ -201,20 +201,25 @@ static void svprestartup(void *receiver, void *sender, void *args)
     (void)receiver;
     (void)sender;
 
-    const TunnelConfig *tc = Config_tunnel(cfg);
-    while (tc)
+    PSC_ListIterator *i = PSC_List_iterator(PSC_Config_get(cfg, CFG_TUNNEL));
+    while (PSC_ListIterator_moveNext(i))
     {
+	const PSC_Config *tc = PSC_ListIterator_current(i);
 	PSC_TcpServerOpts *opts = PSC_TcpServerOpts_create(
-		TunnelConfig_bindport(tc));
-	PSC_TcpServerOpts_bind(opts, TunnelConfig_bindhost(tc));
-	PSC_TcpServerOpts_setProto(opts, TunnelConfig_serverproto(tc));
-	if (TunnelConfig_server(tc))
+		PSC_Config_getInteger(tc, CFG_T_PORT));
+	PSC_TcpServerOpts_bind(opts, PSC_Config_getString(tc, CFG_T_HOST));
+	PSC_TcpServerOpts_setProto(opts,
+		PSC_Config_getInteger(tc, CFG_T_SERVERPROTO));
+	if (PSC_Config_get(tc, CFG_T_SERVER))
 	{
 	    PSC_TcpServerOpts_enableTls(opts,
-		    TunnelConfig_certfile(tc),
-		    TunnelConfig_keyfile(tc));
+		    PSC_Config_getString(tc, CFG_T_CERTFILE),
+		    PSC_Config_getString(tc, CFG_T_KEYFILE));
 	}
-	if (Config_numerichosts(cfg)) PSC_TcpServerOpts_numericHosts(opts);
+	if (PSC_Config_get(cfg, CFG_NUMERIC))
+	{
+	    PSC_TcpServerOpts_numericHosts(opts);
+	}
 	PSC_Server *server = PSC_Server_createTcp(opts);
 	PSC_TcpServerOpts_destroy(opts);
 	if (!server)
@@ -231,8 +236,8 @@ static void svprestartup(void *receiver, void *sender, void *args)
 	servers[servsize].tc = tc;
 	PSC_Event_register(PSC_Server_clientConnected(server),
 		&servers[servsize++], newclient, 0);
-	tc = TunnelConfig_next(tc);
     }
+    PSC_ListIterator_destroy(i);
 }
 
 static void svshutdown(void *receiver, void *sender, void *args)
@@ -251,15 +256,16 @@ static void svshutdown(void *receiver, void *sender, void *args)
     servsize = 0;
 }
 
-SOLOCAL int Tlsc_run(const Config *config)
+SOLOCAL int Tlsc_run(const PSC_Config *config)
 {
     cfg = config;
 
-    PSC_RunOpts_init(Config_pidfile(cfg));
-    PSC_RunOpts_runas(Config_uid(cfg), Config_gid(cfg));
+    PSC_RunOpts_init(PSC_Config_getString(cfg, CFG_PIDFILE));
+    PSC_RunOpts_runas(PSC_Config_getInteger(cfg, CFG_USER),
+	    PSC_Config_getInteger(cfg, CFG_GROUP));
     PSC_RunOpts_enableDefaultLogging(LOGIDENT);
-    if (!Config_daemonize(cfg)) PSC_RunOpts_foreground();
-    if (Config_verbose(cfg)) PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
+    if (PSC_Config_get(cfg, CFG_FOREGROUND)) PSC_RunOpts_foreground();
+    if (PSC_Config_get(cfg, CFG_VERBOSE)) PSC_Log_setMaxLogLevel(PSC_L_DEBUG);
 
     PSC_ThreadOpts_init(8);
     PSC_ThreadOpts_maxThreads(16);

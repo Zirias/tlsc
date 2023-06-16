@@ -1,8 +1,8 @@
 #ifndef TLSC_TLSC_H
 #define TLSC_TLSC_H
 
-typedef struct Config Config;
+#include <poser/core/config.h>
 
-int Tlsc_run(const Config *config);
+int Tlsc_run(const PSC_Config *config);
 
 #endif
